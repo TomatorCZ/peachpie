@@ -101,6 +101,10 @@ function Test1($server, $user_name, $user_pass) {
         return false;
     }
 
+    if (ftp_pasv($conn_id,true))
+        {
+            echo "Passive mode on";
+        }
     // Prepare server
     if (!ftp_put($conn_right, $testingFileServer, $testingFileServer)) {
         echo "Testing file $testingFileServer was not uploaded\n";
