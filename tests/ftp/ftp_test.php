@@ -101,7 +101,7 @@ function Test1($server, $user_name, $user_pass) {
         return false;
     }
 
-    if (ftp_pasv($conn_id,true))
+    if (ftp_pasv($conn_right,true))
         {
             echo "Passive mode on";
         }
