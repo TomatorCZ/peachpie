@@ -20,6 +20,11 @@ using System.IO;
 using static Pchp.Library.PhpHash;
 using System.Security.Cryptography.X509Certificates;
 using Pchp.Core.Utilities;
+using Org.BouncyCastle.OpenSsl;
+using Org.BouncyCastle.Crypto.Parameters;
+using Org.BouncyCastle.Crypto;
+using Org.BouncyCastle.Asn1.Pkcs;
+using Org.BouncyCastle.Pkcs;
 
 namespace Pchp.Library
 {
@@ -549,24 +554,31 @@ namespace Pchp.Library
                 // TODO: Last field of bytes ??
                 builder.AppendFormat("\t\t\t{0}\n", BitConverter.ToString(x509.Certificate.RawData).Replace("-", ":"));
             }
+               
             builder.Append("-----BEGIN CERTIFICATE-----\n");
 
-            int alignment = 64;
-            string encoded = System.Convert.ToBase64String(x509.Certificate.Export(X509ContentType.Cert));
+            builder.Append(AlignData(System.Convert.ToBase64String(x509.Certificate.Export(X509ContentType.Cert)), 64));
+
+            builder.Append("-----END CERTIFICATE-----\n");
+
+            return builder.ToString();
+        }
+
+        private static string AlignData(string data, int alignment)
+        {
+            StringBuilder builder = new StringBuilder();
 
             int reminder = 0;
-            while (reminder < encoded.Length - alignment)
+            while (reminder < data.Length - alignment)
             {
-                builder.Append(encoded.Substring(reminder, alignment));
+                builder.Append(data.Substring(reminder, alignment));
                 builder.Append("\n");
                 reminder += alignment;
             }
 
-            if (reminder != encoded.Length - 1)
-                builder.Append(encoded.Substring(reminder, encoded.Length - reminder));
+            if (reminder != data.Length - 1)
+                builder.Append(data.Substring(reminder, data.Length - reminder));
             builder.Append("\n");
-
-            builder.Append("-----END CERTIFICATE-----\n");
 
             return builder.ToString();
         }
@@ -643,47 +655,14 @@ namespace Pchp.Library
         /// </summary>
         public class OpenSSLKeyResource : PhpResource
         {
-            public AsymmetricAlgorithm Algorithm { get; } = null;
-            KeyType Type;
+            public AsymmetricKeyParameter PrivateKey { get; } = null;
+            public AsymmetricKeyParameter PublicKey { get; } = null;
 
-            public OpenSSLKeyResource(AsymmetricAlgorithm algorithm, KeyType type) : base("OpenSSL key")
+            public OpenSSLKeyResource(AsymmetricKeyParameter privateKey, AsymmetricKeyParameter publicKey) : base("OpenSSL key")
             {
-                Algorithm = algorithm;
-                Type = type;
+                PrivateKey = privateKey;
+                PublicKey = publicKey;
             }
-
-            ///// <summary>
-            ///// Exports key in PEM format.
-            ///// </summary>
-            ///// <param name="ctx">Context of the script.</param>
-            ///// <param name="publicKey"> Exports public key if TRUE else private key.</param>
-            ///// <returns>PEM formatted key.</returns>
-            //public string Export(Context ctx, bool publicKey)
-            //{
-            //    RSAParameters parameters = new RSAParameters();
-            //    switch (Type)
-            //    {
-            //        case KeyType.RSA:
-            //            parameters = ((RSA)Algorithm).ExportParameters(false);
-            //            break;
-            //        case KeyType.DSA:
-            //        case KeyType.DH:
-            //        case KeyType.EC:
-            //            throw new NotImplementedException();
-            //    }
-
-            //    using MemoryStream stream = new MemoryStream();
-            //    using (var writer = new PemWriter(stream))
-            //    {
-            //        if (publicKey)
-            //            writer.WritePublicKey(parameters);
-            //        else
-            //            writer.WritePrivateKey(parameters);
-
-            //    }
-
-            //    return ctx.StringEncoding.GetString(stream.ToArray());
-            //}
 
             //public byte[] Sign(byte[] data)
             //{
@@ -700,7 +679,7 @@ namespace Pchp.Library
             //}
         }
 
-        static OpenSSLKeyResource ParseOpenSSLKey(PhpValue mixed)
+        static OpenSSLKeyResource ParseOpenSSLKey(Context ctx, PhpValue mixed)
         {
             if (mixed.AsResource() is OpenSSLKeyResource h && h.IsValid)
             {
@@ -708,59 +687,218 @@ namespace Pchp.Library
             }
             else
             {
-                //var path = "a";
-                //using (var stream = File.OpenRead(path))
-                //using (var reader = new PemReader(stream))
-                //{
-                //    var rsaParameters = reader.ReadRsaKey();
-                //    // ...
-                //}
-                // TODO: Other posibilities
+                // TO DO: OtherValues
+                throw new NotImplementedException();
+            }
+        }
+
+        /// <summary>
+        /// Parses key and prepares it for use by other functions.
+        /// </summary>
+        /// <param name="key">A PEM formatted private key or a string having the format file://path/to/file.pem. The named file must contain a PEM encoded certificate/private key </param>
+        /// <param name="passphrase">The optional parameter passphrase must be used if the specified key is encrypted</param>
+        /// <returns>Returns a positive key resource identifier on success, or FALSE on error.</returns>
+        [return:CastToFalse]
+        public static OpenSSLKeyResource openssl_pkey_get_private(PhpValue key, string passphrase = "")
+        {
+            if (key.AsString() is string h)
+            {
+                if (h.StartsWith(FileSchemePrefix)) // Loads from the file. (Certificate/Private key)
+                {
+                    // TO DO: Loads from the file.
+                    throw new NotImplementedException();
+                }
+                else // A PEM formatted private key.
+                {
+                    return ImportPrivKeyFromPem(h, passphrase);
+                }
+            }
+            else
+                PhpException.Throw(PhpError.Warning, Resources.Resources.openssl_pkey_cannot_get, "1");
+
+            return null;
+        }
+
+        private static OpenSSLKeyResource ImportPrivKeyFromPem(string pemFormKey, string password)
+        {
+            if (!String.IsNullOrEmpty(password))
+                throw new NotImplementedException();
+            //TO DO: password
+            //string a = pemFormKey.Replace("-----BEGIN ENCRYPTED PRIVATE KEY-----", "");
+            //string b = a.Replace("-----END ENCRYPTED PRIVATE KEY-----", "");
+            //string c = b.Replace("\r\n", "");
+
+            //System.Convert.FromBase64String(c);
+
+
+            TextReader textReader = new StringReader(pemFormKey);
+            PemReader pemReader = new PemReader(textReader);//,new PasswordFinder(password));
+            object privateKeyObject = pemReader.ReadObject();
+            
+            if (privateKeyObject is DsaPrivateKeyParameters dsaPrivateKey)
+                return new OpenSSLKeyResource(dsaPrivateKey, null);
+
+            if (privateKeyObject is RsaPrivateCrtKeyParameters rsaPrivatekey)
+            {
+                // Can be restored public key
+                // RsaKeyParameters rsaPublicKey = new RsaKeyParameters(false, rsaPrivatekey.Modulus, rsaPrivatekey.PublicExponent);
+                return new OpenSSLKeyResource(rsaPrivatekey, null);
+            }
+
+            if (privateKeyObject is AsymmetricCipherKeyPair pair)
+            {
+                // Can be restored public key
+                if (pair.Private is ECPrivateKeyParameters ecPrivateKey)
+                {
+                    return new OpenSSLKeyResource(ecPrivateKey, null);
+                }
+            }
+
+            if (privateKeyObject is DHKeyParameters dhPrivatekey)
+                return new OpenSSLKeyResource(dhPrivatekey, null);
+
+            PhpException.Throw(PhpError.Warning, Resources.Resources.openssl_pkey_cannot_get, "1");
+            return null;
+        }
+
+        private const string beginPrivKPem = "-----BEGIN PRIVATE KEY-----";
+        private const string endPrivKPem = "-----END PRIVATE KEY-----";
+
+        /// <summary>
+        /// Gets an exportable representation of a key into a string.
+        /// </summary>
+        /// <param name="ctx">Runtime context.</param>
+        /// <param name="passphrase">The key is optionally protected by passphrase.</param>
+        /// <param name="configargs">configargs can be used to fine-tune the export process by specifying and/or overriding options for the openssl configuration file.</param>
+        /// <returns>Returns TRUE on success or FALSE on failure.</returns>
+        public static bool openssl_pkey_export(Context ctx, PhpValue key, ref string pkey, string passphrase = "", PhpArray configargs = null)
+        {
+            var resource = ParseOpenSSLKey(ctx, key);
+            if (resource == null)
+                return false;
+
+            pkey = ExportPKey(resource, passphrase, configargs);
+
+            return true;
+        }
+
+        /// <summary>
+        /// Exports the key in PEM format.
+        /// </summary>
+        /// <returns>PEM formatted key.</returns>
+        private static string ExportPKey(OpenSSLKeyResource privateKey, string passphrase, PhpArray configargs)
+        {
+            if (configargs != null)
+            {
+                // TODO: ConfigArgs
                 throw new NotImplementedException();
             }
 
-            //
-            //PhpException.Throw(PhpError.Warning, Resources.Resources.X509_cannot_be_coerced);
-            //return null;
+            if (!String.IsNullOrEmpty(passphrase))
+            {
+                // TODO: Passphrase
+                throw new NotImplementedException();
+            }
+
+            if (privateKey.PrivateKey is ECPrivateKeyParameters)
+            {
+                StringWriter wr = new StringWriter();
+                wr.NewLine = "\n";
+                PemWriter pem = new PemWriter(wr);
+                pem.WriteObject(privateKey.PrivateKey);
+                pem.Writer.Flush();
+                pem.Writer.Close();
+                return wr.ToString();
+            }
+
+            var KeyInfo = PrivateKeyInfoFactory.CreatePrivateKeyInfo(privateKey.PrivateKey);
+            
+            //var f = EncryptedPrivateKeyInfoFactory.CreateEncryptedPrivateKeyInfo("AES-256-CBC", passphrase.ToCharArray(), new byte[1], 1, privateKey.PrivateKey);
+
+            //string a = System.Convert.ToBase64String(f.GetDerEncoded());
+
+            return beginPrivKPem + "\n" + AlignData(System.Convert.ToBase64String(KeyInfo.GetDerEncoded()), 64) + endPrivKPem + "\n";
         }
 
-        public static OpenSSLKeyResource openssl_pkey_new(PhpArray configargs = null)
+        /// <summary>
+        /// Saves an ascii-armoured (PEM encoded) rendition of key into the file named by outfilename.
+        /// </summary>
+        /// <param name="outfilename">Path to the output file.</param>
+        /// <param name="passphrase">The key can be optionally protected by a passphrase.</param>
+        /// <param name="configargs">configargs can be used to fine-tune the export process by specifying and/or overriding options for the openssl configuration file.</param>
+        /// <returns></returns>
+        public static bool openssl_pkey_export_to_file(Context ctx, PhpValue key, string outfilename, string passphrase = "", PhpArray configargs = null)
         {
-            KeyType type = KeyType.RSA; // By default
+            var resource = ParseOpenSSLKey(ctx, key);
+            if (resource == null)
+                return false;
 
-            if (configargs != null && configargs.Count != 0)
+            string pemKey = ExportPKey(resource, passphrase, configargs);
+
+            try
             {
-                // Important atributes: config, curve_name, encrypt_key_cipher, encrypt_key, private_key_type, private_key_bits
-
-                // // private_key_type
-                if (configargs.TryGetValue("private_key_type", out var fieldtypeValue) &&
-                    fieldtypeValue.IsLong(out var fieldtype))
-                {
-                    type = (KeyType)fieldtype;
-                }
-
-                // TODO: Other Atributes
+                using (StreamWriter wr = new StreamWriter(outfilename))
+                    wr.Write(pemKey);
             }
+            catch (IOException) { return false; }
 
-            AsymmetricAlgorithm alg;
-            switch (type)
-            {
-                case KeyType.RSA:
-                    alg = RSA.Create();
-                    break;
-                case KeyType.DSA:
-                    alg = DSA.Create();
-                    break;
-                case KeyType.DH:
-                case KeyType.EC:
-                    throw new NotImplementedException();
-
-                default:
-                    throw new ArgumentException($"private_key_type '{type}' unsupported.");
-            }
-
-            return new OpenSSLKeyResource(alg, type);
+            return true;
         }
+
+
+        //private class PasswordFinder : IPasswordFinder
+        //{
+        //    private string password;
+
+        //    public PasswordFinder(string password)
+        //    {
+        //        this.password = password;
+        //    }
+
+
+        //    public char[] GetPassword()
+        //    {
+        //        return password.ToCharArray();
+        //    }
+        //}
+
+        //public static OpenSSLKeyResource openssl_pkey_new(PhpArray configargs = null)
+        //{
+        //    KeyType type = KeyType.RSA; // By default
+
+        //    if (configargs != null && configargs.Count != 0)
+        //    {
+        //        // Important atributes: config, curve_name, encrypt_key_cipher, encrypt_key, private_key_type, private_key_bits
+
+        //        // // private_key_type
+        //        if (configargs.TryGetValue("private_key_type", out var fieldtypeValue) &&
+        //            fieldtypeValue.IsLong(out var fieldtype))
+        //        {
+        //            type = (KeyType)fieldtype;
+        //        }
+
+        //        // TODO: Other Atributes
+        //    }
+
+        //    AsymmetricAlgorithm alg;
+        //    switch (type)
+        //    {
+        //        case KeyType.RSA:
+        //            alg = RSA.Create();
+        //            break;
+        //        case KeyType.DSA:
+        //            alg = DSA.Create();
+        //            break;
+        //        case KeyType.DH:
+        //        case KeyType.EC:
+        //            throw new NotImplementedException();
+
+        //        default:
+        //            throw new ArgumentException($"private_key_type '{type}' unsupported.");
+        //    }
+
+        //    return new OpenSSLKeyResource(alg, type);
+        //}
 
         //public static int openssl_verify(Context ctx, string data , string signature , PhpValue pub_key_id, PhpValue signature_alg)
         //{
@@ -781,20 +919,6 @@ namespace Pchp.Library
         //    // TODO: Compare array byte -> pozor na porovnani referenci
         //    return (resource.Sign(Core.Convert.ToBytes(data, ctx)) == Core.Convert.ToBytes(signature, ctx)) ? 1 : 0;
         //}
-
-        //public static bool openssl_pkey_export(PhpValue key, ref string pkey, string passphrase = "", PhpArray configargs = null)
-        //{
-        //    var resource = ParseOpenSSLKey(key);
-        //    if (resource == null)
-        //        return false;
-
-
-
-        //    // TODO: Implementation
-        //    throw new NotImplementedException();
-        //}
-
-
         #endregion
     }
 }

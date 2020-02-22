@@ -708,4 +708,7 @@
   <data name="openssl_X509_cannot_be_coerced" xml:space="preserve">
     <value>Supplied parameter cannot be coerced into an X509 certificate!</value>
   </data>
+  <data name="openssl_pkey_cannot_get" xml:space="preserve">
+    <value>cannot get key from parameter {0}</value>
+  </data>
 </root>

@@ -1231,6 +1231,15 @@ namespace Pchp.Library.Resources {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to cannot get key from parameter {0}.
+        /// </summary>
+        public static string openssl_pkey_cannot_get {
+            get {
+                return ResourceManager.GetString("openssl_pkey_cannot_get", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to IV passed is only {0} bytes long, cipher expects an IV of precisely {1} bytes, padding with \0.
         /// </summary>
         public static string openssl_short_iv {
