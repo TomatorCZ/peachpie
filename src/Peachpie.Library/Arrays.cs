@@ -109,9 +109,8 @@ namespace Pchp.Library
         {
             if (array == null)
             {
-                //PhpException.ReferenceNull("array");
-                //return null;
-                throw new ArgumentNullException();
+                PhpException.ArgumentNull(nameof(array));
+                return PhpValue.Null;
             }
 
             return array.IntrinsicEnumerator.CurrentValue.GetValue(); // NOTE: gets FALSE if at end
@@ -142,9 +141,8 @@ namespace Pchp.Library
         {
             if (array == null)
             {
-                //PhpException.ReferenceNull("array");
-                //return null;
-                throw new ArgumentNullException();
+                PhpException.ArgumentNull(nameof(array));
+                return PhpValue.Null;
             }
 
             // note, key can't be of type PhpAlias, hence no dereferencing follows:
@@ -164,9 +162,8 @@ namespace Pchp.Library
         {
             if (array == null)
             {
-                //PhpException.ReferenceNull("array");
-                //return null;
-                throw new ArgumentNullException();
+                PhpException.ArgumentNull(nameof(array));
+                return PhpValue.Null;
             }
 
             // moves to the next item and returns false if there is no such item:
@@ -188,9 +185,8 @@ namespace Pchp.Library
         {
             if (array == null)
             {
-                //PhpException.ReferenceNull("array");
-                //return null;
-                throw new ArgumentNullException();
+                PhpException.ArgumentNull(nameof(array));
+                return PhpValue.Null;
             }
 
             // moves to the previous item and returns false if there is no such item:
@@ -210,9 +206,8 @@ namespace Pchp.Library
         {
             if (array == null)
             {
-                //PhpException.ReferenceNull("array");
-                //return null;
-                throw new ArgumentNullException();
+                PhpException.ArgumentNull(nameof(array));
+                return PhpValue.Null;
             }
 
             // moves to the last item and returns false if there is no such item:
@@ -232,7 +227,7 @@ namespace Pchp.Library
         {
             if (array == null)
             {
-                //PhpException.ReferenceNull("array");
+                PhpException.ArgumentNull(nameof(array));
                 return PhpValue.Null;
             }
 
@@ -333,7 +328,7 @@ namespace Pchp.Library
             // adds copies variables (if called by PHP):
             for (int i = 0; i < vars.Length; i++)
             {
-                array.Add(vars[i]);
+                array.Add(vars[i].GetValue());
             }
 
             return array.Count;
@@ -387,7 +382,7 @@ namespace Pchp.Library
             // prepends items indexing keys from 0 to the number of items - 1:
             for (int i = vars.Length - 1; i >= 0; i--)
             {
-                array.Prepend(i, vars[i]);
+                array.Prepend(i, vars[i].GetValue());
             }
 
             return array.Count;
@@ -507,7 +502,7 @@ namespace Pchp.Library
         }
 
         /// <summary>
-        /// Implementation of <see cref="array_splice(PhpArray,int,int,object)"/> and <see cref="array_splice(PhpArray,int,int,object)"/>.
+        /// Implementation of <see cref="array_splice"/>.
         /// </summary>
         /// <remarks>Whether to make a deep-copy of items in the replacement.</remarks>
         internal static PhpArray SpliceInternal(PhpArray array, int offset, int length, PhpValue replacement)
@@ -1494,10 +1489,8 @@ namespace Pchp.Library
             {
                 var arg = args[i];
 
-                if (arg.IsArray)
+                if (arg.IsPhpArray(out var array))
                 {
-                    var array = arg.Array;
-
                     // checks whether the currently processed array has the same length as the first one:
                     if (array.Count != row_count)
                     {
@@ -1519,10 +1512,8 @@ namespace Pchp.Library
 
                     col_count++;
                 }
-                else if (arg.TypeCode == PhpTypeCode.Long)
+                else if (arg.IsLong(out var num))
                 {
-                    var num = (int)arg.ToLong();
-
                     switch (num)
                     {
                         case (int)ComparisonMethod.Regular:
@@ -1566,9 +1557,8 @@ namespace Pchp.Library
                 }
                 else
                 {
-                    //PhpException.Throw(PhpError.Warning, LibResources.GetString("argument_not_array_or_sort_flag", i));
-                    //return 0;
-                    throw new ArgumentException();
+                    PhpException.Throw(PhpError.Warning, LibResources.argument_not_array_or_sort_flag, i.ToString());
+                    return 0;
                 }
             }
 
@@ -1993,41 +1983,39 @@ namespace Pchp.Library
         /// Values associated with existing string keys are be overwritten.
         /// </summary>
         /// <param name="arrays">Arrays to be merged.</param>
-        /// <returns>The <see cref="PhpArray"/> containing items from all <paramref name="arrays"/>.</returns>
+        /// <returns>
+        /// The <see cref="PhpArray"/> containing items from all <paramref name="arrays"/>.
+        /// Returns <c>null</c> in case of error.</returns>
         //[return: PhpDeepCopy]
         public static PhpArray array_merge(params PhpArray[] arrays)
         {
             // "arrays" argument is PhpArray[] => compiler generates code converting any value to PhpArray.
             // Note, PHP does reject non-array arguments.
 
-            if (arrays == null)
-            {
-                //PhpException.InvalidArgument("arrays", LibResources.GetString("arg_null_or_empty"));
-                //return null;
-                throw new ArgumentNullException();
-            }
-
-            if (arrays.Length == 0)
+            if (arrays == null || arrays.Length == 0)
             {
                 return PhpArray.NewEmpty();
             }
 
-            var result = new PhpArray(arrays[0].Count);
+            var result = new PhpArray(arrays[0] != null ? arrays[0].Count : 0);
 
             for (int i = 0; i < arrays.Length; i++)
             {
-                if (arrays[i] != null)
+                if (arrays[i] == null)
                 {
-                    var enumerator = arrays[i].GetFastEnumerator();
-                    while (enumerator.MoveNext())
-                    {
-                        var value = enumerator.CurrentValue.DeepCopy();
+                    PhpException.Throw(PhpError.Warning, Resources.Resources.argument_not_array, (i + 1).ToString());
+                    return null;
+                }
 
-                        if (enumerator.CurrentKey.IsString)
-                            result[enumerator.CurrentKey] = value;
-                        else
-                            result.Add(value);
-                    }
+                var enumerator = arrays[i].GetFastEnumerator();
+                while (enumerator.MoveNext())
+                {
+                    var value = enumerator.CurrentValue.DeepCopy();
+
+                    if (enumerator.CurrentKey.IsString)
+                        result[enumerator.CurrentKey] = value;
+                    else
+                        result.Add(value);
                 }
             }
 
@@ -2571,9 +2559,8 @@ namespace Pchp.Library
         {
             if (array == null)
             {
-                //PhpException.ArgumentNull("array");
-                //return null;
-                throw new ArgumentNullException();
+                PhpException.ArgumentNull(nameof(array));
+                return null; // NULL
             }
 
             // no need to make a deep copy since keys are immutable objects (strings, ints):
@@ -2602,9 +2589,8 @@ namespace Pchp.Library
         {
             if (array == null)
             {
-                //PhpException.ArgumentNull("array");
-                //return null;
-                throw new ArgumentNullException();
+                PhpException.ArgumentNull(nameof(array));
+                return null; // NULL
             }
 
             var result = new PhpArray();
@@ -2643,17 +2629,16 @@ namespace Pchp.Library
         {
             if (array == null)
             {
-                //PhpException.ArgumentNull("array");
-                //return null;
-                throw new ArgumentNullException(nameof(array));
+                PhpException.ArgumentNull(nameof(array));
+                return null;
             }
 
             // references are not dereferenced:
-            PhpArray result = new PhpArray(array.Count);
+            var result = new PhpArray(array.Count);
             var enumerator = array.GetFastEnumerator();
             while (enumerator.MoveNext())
             {
-                result.Add(enumerator.CurrentValue);
+                result.Add(enumerator.CurrentValue.DeepCopy());
             }
 
             // result is inplace deeply copied on return to PHP code:
@@ -2822,21 +2807,15 @@ namespace Pchp.Library
                 return initialValue;
             }
 
-            PhpValue[] args = new PhpValue[] { initialValue.DeepCopy(), PhpValue.Null };
+            var args = new PhpValue[] { initialValue.DeepCopy(), PhpValue.Null };
 
             var iterator = array.GetFastEnumerator();
             while (iterator.MoveNext())
             {
-                var item = iterator.CurrentValue;
-
-                args[1] = item.IsAlias ? item : PhpValue.Create(item.EnsureAlias());
+                args[1] = iterator.CurrentValueAliased;
                 args[0] = function.Invoke(ctx, args);
 
-                // updates an item if it wasn't alias
-                if (!item.IsAlias)
-                {
-                    iterator.CurrentValue = args[1].Alias.Value;
-                }
+                // CONSIDER: dereference the item if it wasn't alias before the operation
             }
 
             // dereferences the last returned value:
@@ -3210,6 +3189,12 @@ namespace Pchp.Library
         /// </remarks>
         public static PhpArray array_map(Context ctx /*, caller*/, IPhpCallable map, [In, Out] params PhpArray[] arrays)
         {
+            if (map != null && !PhpVariable.IsValidBoundCallback(ctx, map))
+            {
+                PhpException.InvalidArgument(nameof(map));
+                return null;
+            }
+
             //if (!PhpArgument.CheckCallback(map, caller, "map", 0, true)) return null;
             if (arrays == null || arrays.Length == 0)
             {

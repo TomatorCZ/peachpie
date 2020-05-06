@@ -11,6 +11,7 @@ using Pchp.Library.Resources;
 
 namespace Pchp.Library
 {
+    [PhpExtension("standard")]
     public static class Strings
     {
         #region Character map
@@ -51,14 +52,14 @@ namespace Pchp.Library
         /// Converts ordinal number of character to a binary string containing that character.
         /// </summary>
         /// <param name="charCode">The ASCII code.</param>
-        /// <returns>The character with <paramref name="charCode"/> ASCIT code.</returns>
+        /// <returns>The character with <paramref name="charCode"/> ASCII code.</returns>
         public static PhpString chr(int charCode) => new PhpString(new byte[] { (byte)charCode });
 
         /// <summary>
         /// Converts ordinal number of Unicode character to a string containing that character.
         /// </summary>
         /// <param name="charCode">The ordinal number of character.</param>
-        /// <returns>The character with <paramref name="charCode"/> ordnial number.</returns>
+        /// <returns>The character with <paramref name="charCode"/> ordinal number.</returns>
         /*public*/
         static string chr_unicode(int charCode)
         {
@@ -599,16 +600,7 @@ namespace Pchp.Library
         /// </summary>
         /// <param name="str">The string to be reversed.</param>
         /// <returns>The reversed string or empty string if <paramref name="str"/> is null.</returns>
-        public static string strrev(string str)
-        {
-            if (string.IsNullOrEmpty(str))
-                return string.Empty;
-
-            //
-            var chars = str.ToCharArray();
-            Array.Reverse(chars);
-            return new string(chars);
-        }
+        public static PhpString strrev(PhpString str) => str.Reverse();
 
         /// <summary>
         /// Finds a length of a segment consisting entirely of specified characters.
@@ -777,7 +769,7 @@ namespace Pchp.Library
                 throw new ArgumentException();
             }
 
-            return ImplodeInternal(ctx, PhpValue.Void, pieces);
+            return ImplodeInternal(ctx, PhpValue.Null, pieces);
         }
 
         /// <summary>
@@ -1016,7 +1008,7 @@ namespace Pchp.Library
         }
 
         /// <summary>
-        /// GetUserEntryPoint encode a string by shifting every letter (a-z, A-Z) by 13 places in the alphabet.
+        /// Encodes a string by shifting every letter (a-z, A-Z) by 13 places in the alphabet.
         /// </summary>
         /// <param name="str">The string to be encoded.</param>
         /// <returns>The string with characters rotated by 13 places.</returns>
@@ -1491,7 +1483,7 @@ namespace Pchp.Library
             {
                 if (result == null)
                 {
-                    result = new StringBuilder(subject.Length);
+                    result = StringBuilderUtilities.Pool.Get();
                 }
 
                 result.Append(subject, from, index - from);
@@ -1507,7 +1499,7 @@ namespace Pchp.Library
             else
             {
                 result.Append(subject, from, subject.Length - from);
-                return result.ToString();
+                return StringBuilderUtilities.GetStringAndReturn(result);
             }
         }
 
@@ -2238,7 +2230,7 @@ namespace Pchp.Library
         /// <param name="charSet">The character set used in conversion. This parameter is ignored.</param>
         /// <param name="keepExisting">Whether to keep existing entities and do not encode them.</param>
         /// <returns>The converted substring.</returns>
-        static string HtmlSpecialCharsEncode(string str, int index, int length, QuoteStyle quoteStyle, string charSet, bool keepExisting)
+        internal static string HtmlSpecialCharsEncode(string str, int index, int length, QuoteStyle quoteStyle, string charSet, bool keepExisting)
         {
             int maxi = index + length;
             Debug.Assert(maxi <= str.Length);
@@ -2670,7 +2662,7 @@ namespace Pchp.Library
                 return false;
             }
         }
-        
+
         #endregion
 
         /// <summary>
@@ -3691,12 +3683,13 @@ namespace Pchp.Library
         /// </summary>
         /// <param name="str">The input string.</param>
         /// <returns><paramref name="str"/> with the first character converted to uppercase.</returns>
+        [return: NotNull]
         public static string ucfirst(string str)
         {
             if (string.IsNullOrEmpty(str))
                 return string.Empty;
 
-            return Char.ToUpper(str[0]) + str.Substring(1);
+            return char.ToUpper(str[0]) + str.Substring(1);
         }
 
         /// <summary>
@@ -3705,6 +3698,7 @@ namespace Pchp.Library
         /// </summary>
         /// <param name="str">The input string.</param>
         /// <returns>Returns the resulting string.</returns>
+        [return: NotNull]
         public static string lcfirst(string str)
         {
             if (string.IsNullOrEmpty(str))
@@ -3718,12 +3712,23 @@ namespace Pchp.Library
         /// Makes the first character of each word in a string uppercase.
         /// </summary>
         /// <param name="str">The input string.</param>
-        /// <returns><paramref name="str"/> with the first character of each word in a string converted to 
-        /// uppercase.</returns>
-        public static string ucwords(string str)
+        /// <returns><paramref name="str"/> with the first character of each word in a string converted to uppercase.</returns>
+        [return: NotNull]
+        public static string ucwords(string str) => ucwords(str, " \t\r\n\f\v");
+
+        /// <summary>
+        /// Makes the first character of each word in a string uppercase.
+        /// </summary>
+        /// <param name="str">The input string.</param>
+        /// <param name="delimiters">The word separator characters.</param>
+        /// <returns><paramref name="str"/> with the first character of each word in a string converted to uppercase.</returns>
+        [return: NotNull]
+        public static string ucwords(string str, string delimiters)
         {
             if (string.IsNullOrEmpty(str))
+            {
                 return string.Empty;
+            }
 
             int length = str.Length;
             var result = new StringBuilder(str);
@@ -3731,14 +3736,14 @@ namespace Pchp.Library
             bool state = true;
             for (int i = 0; i < length; i++)
             {
-                if (char.IsWhiteSpace(result[i])) state = true;
-                else
+                if (delimiters.IndexOf(result[i]) >= 0)
                 {
-                    if (state)
-                    {
-                        result[i] = char.ToUpper(result[i]);
-                        state = false;
-                    }
+                    state = true;
+                }
+                else if (state)
+                {
+                    result[i] = char.ToUpper(result[i]);
+                    state = false;
                 }
             }
 
@@ -3769,7 +3774,7 @@ namespace Pchp.Library
             Debug.Assert(format != null && arguments != null);
 
             Encoding encoding = ctx.StringEncoding;
-            StringBuilder result = new StringBuilder();
+            var result = StringBuilderUtilities.Pool.Get();
             int state = 0, width = 0, precision = -1, seqIndex = 0, swapIndex = -1;
             bool leftAlign = false;
             bool plusSign = false;
@@ -4002,7 +4007,7 @@ namespace Pchp.Library
                 }
             }
 
-            return result.ToString();
+            return StringBuilderUtilities.GetStringAndReturn(result);
         }
 
         /// <summary>
@@ -5300,7 +5305,7 @@ namespace Pchp.Library
         /// Retrieves the index of the first occurrence of the <paramref name="needle"/> in the <paramref name="haystack"/>
         /// (case insensitive).
         /// </summary>
-        /// <remarks>See <see cref="Strpos(string,object,int)"/> for details.</remarks>
+        /// <remarks>See <see cref="strpos"/> for details.</remarks>
         /// <exception cref="PhpException">Thrown if <paramref name="offset"/> is out of bounds or <paramref name="needle"/> is empty string.</exception>
         [return: CastToFalse]
         public static int stripos(string haystack, PhpValue needle, int offset = 0)
@@ -5333,7 +5338,7 @@ namespace Pchp.Library
         /// Retrieves the index of the last occurrence of the <paramref name="needle"/> in the <paramref name="haystack"/>
         /// (case insensitive).
         /// </summary>
-        /// <remarks>See <see cref="Strrpos(string,object,int)"/> for details.</remarks>
+        /// <remarks>See <see cref="strrpos"/> for details.</remarks>
         /// <exception cref="PhpException">Thrown if <paramref name="offset"/> is out of bounds or <paramref name="needle"/> is empty string.</exception>
         [return: CastToFalse]
         public static int strripos(string haystack, PhpValue needle, int offset = 0)
@@ -5575,6 +5580,7 @@ namespace Pchp.Library
         /// </summary>
         /// <param name="str">The string to convert.</param>
         /// <returns>The lowercased string or empty string if <paramref name="str"/> is null.</returns>
+        [return: NotNull]
         public static string strtolower(string str) => str != null ? str.ToLowerInvariant() : string.Empty;
         //{
         //    // TODO: Locale: return (str == null) ? string.Empty : str.ToLower(Locale.GetCulture(Locale.Category.CType));
@@ -5586,6 +5592,7 @@ namespace Pchp.Library
         /// </summary>
         /// <param name="str">The string to convert.</param>
         /// <returns>The uppercased string or empty string if <paramref name="str"/> is null.</returns>
+        [return: NotNull]
         public static string strtoupper(string str) => str != null ? str.ToUpperInvariant() : string.Empty;
         //{
         //    // TODO: Locale: return (str == null) ? string.Empty : str.ToUpper(Locale.GetCulture(Locale.Category.CType));

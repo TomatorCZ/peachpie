@@ -206,8 +206,11 @@ namespace Pchp.Library.Streams
                 case 'r':
                     // flags = 0;
                     // fileMode is already set to Open
-                    fileAccess = FileAccess.Read;
+                    fileAccess = (mode.Length > 1 && mode[1] == 'w')
+                        ? FileAccess.ReadWrite  // rw
+                        : FileAccess.Read;      // r
                     //accessOptions |= findFile;
+
                     break;
 
                 case 'w':
@@ -916,6 +919,8 @@ namespace Pchp.Library.Streams
         {
             Debug.Assert(path != null);
 
+            // TODO: no cache here
+
             // Note: path is already absolute w/o the scheme, the permissions have already been checked.
             return PhpPath.HandleFileSystemInfo(StatStruct.Invalid, path, (p) =>
             {
@@ -1229,7 +1234,7 @@ namespace Pchp.Library.Streams
             var timeout = options["timeout"];
             dtimeout = (!timeout.IsEmpty) ? timeout.ToDouble() : config.DefaultSocketTimeout;
             // request.ReadWriteTimeout = (int)(dtimeout * 1000); // to be used by Task.Wait
-            
+
             ////
             //// TODO: max_redirects
             ////
@@ -1572,7 +1577,7 @@ namespace Pchp.Library.Streams
         /// </remarks>
         public static PhpStream ScriptInput(Context ctx)
         {
-            PhpStream input = null; // TODO: cache in Context
+            PhpStream input = null;
             if (input == null)
             {
                 input = new NativeStream(ctx, OpenScriptInput(ctx), null, StreamAccessOptions.Read | StreamAccessOptions.Persistent, "php://input", StreamContext.Default)
@@ -1593,7 +1598,7 @@ namespace Pchp.Library.Streams
         /// </remarks>
         public static PhpStream ScriptOutput(Context ctx)
         {
-            PhpStream output = null; // TODO: cache in Context
+            PhpStream output = null;
             output = new NativeStream(ctx, OpenScriptOutput(ctx), null, StreamAccessOptions.Write | StreamAccessOptions.Persistent, "php://output", StreamContext.Default)
             {
                 IsWriteBuffered = false
@@ -1628,6 +1633,10 @@ namespace Pchp.Library.Streams
 
         #endregion
 
+        public static bool IsStdIn(PhpStream stream) => stream is NativeStream && stream.OpenedPath == "php://stdin";
+        public static bool IsStdOut(PhpStream stream) => stream is NativeStream && stream.OpenedPath == "php://stdout";
+        public static bool IsStdErr(PhpStream stream) => stream is NativeStream && stream.OpenedPath == "php://stderr";
+
         /// <summary>
         /// Represents the console input stream (alias php://stdin).
         /// </summary>
@@ -1635,20 +1644,16 @@ namespace Pchp.Library.Streams
         /// It is a persistent text stream. This means that it is never closed
         /// by <c>fclose()</c> and <c>\r\n</c> is converted to <c>\n</c>.
         /// </remarks>
-        public static PhpStream In
+        public static PhpStream In => s_stdin.Value;
+
+        // EX: cache this as a persistent stream
+        static Lazy<PhpStream> s_stdin = new Lazy<PhpStream>(() => new NativeStream(
+            Utf8EncodingProvider.Instance, Console.OpenStandardInput(), null,
+            StreamAccessOptions.Read | StreamAccessOptions.UseText | StreamAccessOptions.Persistent, 
+            "php://stdin", StreamContext.Default)
         {
-            get
-            {
-                if (stdin == null)
-                {
-                    stdin = new NativeStream(Utf8EncodingProvider.Instance, Console.OpenStandardInput(), null, StreamAccessOptions.Read | StreamAccessOptions.UseText | StreamAccessOptions.Persistent, "php://stdin", StreamContext.Default);
-                    stdin.IsReadBuffered = false;
-                    // EX: cache this as a persistent stream (incl. path and options)
-                }
-                return stdin;
-            }
-        }
-        private static PhpStream stdin = null;
+            IsReadBuffered = false,
+        });
 
         /// <summary>
         /// Represents the console output stream (alias php://stdout).
@@ -1657,20 +1662,16 @@ namespace Pchp.Library.Streams
         /// It is a persistent text stream. This means that it is never closed
         /// by <c>fclose()</c> and <c>\n</c> is converted to <c>\r\n</c>.
         /// </remarks>
-        public static PhpStream Out
+        public static PhpStream Out => s_stdout.Value;
+
+        // EX: cache this as a persistent stream
+        static Lazy<PhpStream> s_stdout = new Lazy<PhpStream>(() => new NativeStream(
+            Utf8EncodingProvider.Instance, Console.OpenStandardOutput(), null,
+            StreamAccessOptions.Write | StreamAccessOptions.UseText | StreamAccessOptions.Persistent,
+            "php://stdout", StreamContext.Default)
         {
-            get
-            {
-                if (stdout == null)
-                {
-                    stdout = new NativeStream(Utf8EncodingProvider.Instance, Console.OpenStandardOutput(), null, StreamAccessOptions.Write | StreamAccessOptions.UseText | StreamAccessOptions.Persistent, "php://stdout", StreamContext.Default);
-                    stdout.IsWriteBuffered = false;
-                    // EX: cache this as a persistent stream
-                }
-                return stdout;
-            }
-        }
-        private static PhpStream stdout = null;
+            IsWriteBuffered = false,
+        });
 
         /// <summary>
         /// Represents the console error stream (alias php://error).
@@ -1679,21 +1680,16 @@ namespace Pchp.Library.Streams
         /// It is a persistent text stream. This means that it is never closed
         /// by <c>fclose()</c> and <c>\n</c> is converted to <c>\r\n</c>.
         /// </remarks>
-        public static PhpStream Error
+        public static PhpStream Error => s_stderr.Value;
+
+        // EX: cache this as a persistent stream
+        static Lazy<PhpStream> s_stderr = new Lazy<PhpStream>(() => new NativeStream(
+            Utf8EncodingProvider.Instance, Console.OpenStandardError(), null,
+            StreamAccessOptions.Write | StreamAccessOptions.UseText | StreamAccessOptions.Persistent,
+            "php://stderr", StreamContext.Default)
         {
-            get
-            {
-                if (stderr == null)
-                {
-                    stderr = new NativeStream(Utf8EncodingProvider.Instance, Console.OpenStandardInput(), null,
-                        StreamAccessOptions.Write | StreamAccessOptions.UseText | StreamAccessOptions.Persistent, "php://stderr", StreamContext.Default);
-                    stderr.IsWriteBuffered = false;
-                    // EX: cache this as a persistent stream
-                }
-                return stderr;
-            }
-        }
-        private static PhpStream stderr = null;
+            IsWriteBuffered = false,
+        });
     }
 
     #endregion

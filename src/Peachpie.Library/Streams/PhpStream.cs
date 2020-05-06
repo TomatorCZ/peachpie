@@ -119,17 +119,18 @@ namespace Pchp.Library.Streams
         /// <param name="path">URI or filename of the resource to be opened</param>
         /// <param name="mode">File access mode</param>
         /// <returns></returns>
-        internal static PhpStream Open(Context ctx, string path, StreamOpenMode mode)
+        public static PhpStream Open(Context ctx, string path, StreamOpenMode mode)
         {
-            string modeStr = null;
+            string modeStr;
             switch (mode)
             {
                 case StreamOpenMode.ReadBinary: modeStr = "rb"; break;
                 case StreamOpenMode.WriteBinary: modeStr = "wb"; break;
                 case StreamOpenMode.ReadText: modeStr = "rt"; break;
                 case StreamOpenMode.WriteText: modeStr = "wt"; break;
+                default: throw new ArgumentException();
             }
-            Debug.Assert(modeStr != null);
+
             return Open(ctx, path, modeStr, StreamOpenOptions.Empty, StreamContext.Default);
         }
 
@@ -190,15 +191,20 @@ namespace Pchp.Library.Streams
         public static PhpStream Open(Context ctx, string path, string mode, StreamOpenOptions options, StreamContext context)
         {
             if (context == null)
-                throw new ArgumentNullException("context");
+            {
+                throw new ArgumentNullException(nameof(context));
+            }
 
             Debug.Assert(ctx != null);
 
-            StreamWrapper wrapper;
-            if (!PhpStream.ResolvePath(ctx, ref path, out wrapper, CheckAccessMode.FileMayExist, (CheckAccessOptions)options))
+            if (ResolvePath(ctx, ref path, out var wrapper, CheckAccessMode.FileMayExist, (CheckAccessOptions)options))
+            {
+                return wrapper.Open(ctx, ref path, mode, options, context);
+            }
+            else
+            {
                 return null;
-
-            return wrapper.Open(ctx, ref path, mode, options, context);
+            }
         }
 
         #endregion
@@ -744,7 +750,6 @@ namespace Pchp.Library.Streams
             readBuffers.Enqueue(data);
         }
 
-
         /// <summary>
         /// Remove the (entirely consumed) read buffer from the head of the read buffer queue.
         /// </summary>
@@ -764,7 +769,6 @@ namespace Pchp.Library.Streams
             readPosition = 0;
             return readBuffers.Count != 0;
         }
-
 
         /// <summary>
         /// Joins the read buffers to get at least <paramref name="length"/> characters
@@ -836,7 +840,6 @@ namespace Pchp.Library.Streams
                 return sb.ToString();
             } // else
         }
-
 
         /// <summary>
         /// Joins the read buffers to get at least <paramref name="length"/> bytes
@@ -1361,7 +1364,7 @@ namespace Pchp.Library.Streams
         public string ReadStringContents(int maxLength)
         {
             if (!CanRead) return null;
-            StringBuilder result = new StringBuilder();
+            var result = StringBuilderUtilities.Pool.Get();
 
             if (maxLength >= 0)
             {
@@ -1383,7 +1386,7 @@ namespace Pchp.Library.Streams
                 }
             }
 
-            return result.ToString();
+            return StringBuilderUtilities.GetStringAndReturn(result);
         }
 
         public byte[] ReadBinaryContents(int maxLength)
@@ -1499,22 +1502,20 @@ namespace Pchp.Library.Streams
         public void AddFilter(IFilter filter, FilterChainOptions where)
         {
             Debug.Assert((where & FilterChainOptions.ReadWrite) != FilterChainOptions.ReadWrite);
-            List<IFilter> list = null;
+            List<IFilter> list;
 
             // Which chain.
-            if ((where & FilterChainOptions.Read) > 0)
+            if ((where & FilterChainOptions.Read) != 0)
             {
-                if (readFilters == null) readFilters = new List<IFilter>();
-                list = readFilters;
+                list = readFilters ??= new List<IFilter>();
             }
             else
             {
-                if (writeFilters == null) writeFilters = new List<IFilter>();
-                list = writeFilters;
+                list = writeFilters ??= new List<IFilter>();
             }
 
             // Position in the chain.
-            if ((where & FilterChainOptions.Tail) > 0)
+            if ((where & FilterChainOptions.Tail) != 0)
             {
                 list.Add(filter);
                 if ((list == readFilters) && (ReadBufferLength > 0))
@@ -1536,19 +1537,34 @@ namespace Pchp.Library.Streams
         }
 
         /// <summary>
+        /// Removes a filter from the filter chains.
+        /// </summary>
+        public bool RemoveFilter(IFilter filter, FilterChainOptions where)
+        {
+            var list = (where & FilterChainOptions.Read) != 0 ? readFilters : writeFilters;
+            return list != null && list.Remove(filter);
+        }
+
+        /// <summary>
         /// Get enumerator of chained read/write filters.
         /// </summary>
         public IEnumerable<PhpFilter> StreamFilters
         {
             get
             {
+                var result = Enumerable.Empty<PhpFilter>();
+
                 if (readFilters != null)
-                    foreach (PhpFilter f in readFilters)
-                        yield return f;
+                {
+                    result = result.Concat(readFilters.Cast<PhpFilter>());
+                }
 
                 if (writeFilters != null)
-                    foreach (PhpFilter f in writeFilters)
-                        yield return f;
+                {
+                    result = result.Concat(writeFilters.Cast<PhpFilter>());
+                }
+
+                return result;
             }
         }
 
@@ -1990,8 +2006,7 @@ namespace Pchp.Library.Streams
         /// <returns>The handle cast to PhpStream.</returns>
         public static PhpStream GetValid(PhpResource handle)
         {
-            var result = handle as PhpStream;
-            if (result != null && result.IsValid)
+            if (handle is PhpStream result && result.IsValid)
             {
                 return result;
             }
@@ -2385,8 +2400,8 @@ namespace Pchp.Library.Streams
         public virtual StatStruct Stat()
         {
             return (this.Wrapper != null)
-            ? this.Wrapper.Stat(OpenedPath, StreamStatOptions.Empty, StreamContext.Default, true)
-            : StreamWrapper.StatUnsupported();
+                ? this.Wrapper.Stat(OpenedPath, StreamStatOptions.Empty, StreamContext.Default, true)
+                : StreamWrapper.StatUnsupported();
         }
 
         #endregion

@@ -20,31 +20,37 @@ namespace Pchp.CodeAnalysis.Symbols
         /// Defines the scope of members visibility.
         /// Used to resolve visibility of called methods and accessed properties.
         /// </summary>
-        public struct VisibilityScope
+        public readonly struct VisibilityScope
         {
             /// <summary>
             /// The type scope if resolved.
             /// Can be <c>null</c> when outside of class or when scope is unknown in compile-time.
             /// </summary>
-            public NamedTypeSymbol Scope;
+            public readonly NamedTypeSymbol Scope;
 
             /// <summary>
             /// Whether the scope can change.
             /// In result visibility of private and protected members may change in runtime. 
             /// </summary>
-            public bool ScopeIsDynamic;
+            public readonly bool ScopeIsDynamic;
 
             /// <summary>
             /// Builds the visibility scope.
             /// </summary>
-            public static VisibilityScope Create(NamedTypeSymbol self, SourceRoutineSymbol routine)
+            public VisibilityScope(NamedTypeSymbol self, SourceRoutineSymbol routine)
             {
-                return new VisibilityScope()
-                {
-                    Scope = self,
-                    ScopeIsDynamic = self.IsTraitType() || routine is SourceLambdaSymbol || (routine?.IsGlobalScope == true),
-                };
+                Scope = self;
+                ScopeIsDynamic = self.IsTraitType() || routine is SourceLambdaSymbol || (routine?.IsGlobalScope == true);
             }
+        }
+
+        [Flags]
+        public enum InvocationKindFlags
+        {
+            InstanceCall = 1,
+            StaticCall = 2,
+
+            New = InstanceCall,
         }
 
         readonly MethodSymbol _single;
@@ -80,7 +86,7 @@ namespace Pchp.CodeAnalysis.Symbols
         /// - <see cref="AmbiguousMethodSymbol"/>
         /// - <see cref="InaccessibleMethodSymbol"/>
         /// </returns>
-        public MethodSymbol/*!*/Resolve(TypeRefContext typeCtx, ImmutableArray<BoundArgument> args, VisibilityScope scope, bool isInstanceMethodCall)
+        public MethodSymbol/*!*/Resolve(TypeRefContext typeCtx, ImmutableArray<BoundArgument> args, VisibilityScope scope, InvocationKindFlags flags)
         {
             if (_single != null)
             {
@@ -114,11 +120,12 @@ namespace Pchp.CodeAnalysis.Symbols
             var statics = result.Count(m => m.IsStatic);
             if (statics > 0 && statics < result.Count)
             {
-                if (isInstanceMethodCall)
+                if ((flags & InvocationKindFlags.StaticCall) == 0)
                 {
                     result.RemoveAll(m => m.IsStatic);
                 }
-                else
+                
+                if ((flags & InvocationKindFlags.InstanceCall) == 0)
                 {
                     result.RemoveAll(m => !m.IsStatic);
                 }
@@ -158,8 +165,10 @@ namespace Pchp.CodeAnalysis.Symbols
 
                 var expectedparams = m.GetExpectedArguments(typeCtx);
 
-                foreach (var p in expectedparams)
+                for (int i = 0; i < expectedparams.Count; i++)
                 {
+                    var p = expectedparams[i];
+
                     hasoptional |= p.DefaultValue != null;
                     hasparams |= p.IsVariadic;
                     if (!hasoptional && !hasparams) nmandatory++;
@@ -177,7 +186,7 @@ namespace Pchp.CodeAnalysis.Symbols
                 }
 
                 //
-                if ((args.Length >= nmandatory || hasunpacking) && (hasparams || args.Length <= expectedparams.Length))
+                if ((args.Length >= nmandatory || hasunpacking) && (hasparams || args.Length <= expectedparams.Count))
                 {
                     // TODO: this is naive implementation of overload resolution,
                     // make it properly using Conversion Cost
@@ -217,8 +226,8 @@ namespace Pchp.CodeAnalysis.Symbols
                 m.DeclaredAccessibility != Accessibility.ProtectedAndInternal && // C# 7.2 "private protected"
                 m.DeclaredAccessibility != Accessibility.Internal && // "internal"
                 (scope.ScopeIsDynamic || m.IsAccessible(scope.Scope)) &&  // method is accessible (or might be in runtime)
-                !m.IsFieldsOnlyConstructor() &&    // method is not a special .ctor which is not accessible from user's code
-                !m.IsPhpHidden() // ignore [PhpHidden] methods !!!
+                !m.IsInitFieldsOnly &&    // method is not a special .ctor which is not accessible from user's code
+                !m.IsPhpHidden() // ignore [PhpHidden] methods
                 );
         }
     }

@@ -113,6 +113,11 @@ namespace Pchp.Library
                     // TODO: this can be set in .NET <see cref="Core.Convert.ToString(double, Context)"/> by specifying "G{precision}", consider performance
                     AssertGet(option, action);
                     return (PhpValue)15;    // default Double precision in .NET
+
+                case "register_globals":
+                    AssertGet(option, action);
+                    return PhpValue.False;  // always Off
+
                 case "allow_url_fopen":
                     return (PhpValue)GetSet(ref config.Core.AllowUrlFopen, true, value, action);
                 case "include_path":
@@ -211,6 +216,7 @@ namespace Pchp.Library
             Register("assert.callback", IniFlags.Supported | IniFlags.Local, s_emptyGsr);
             Register("assert.quiet_eval", IniFlags.Supported | IniFlags.Local, s_emptyGsr);
             Register("assert.warning", IniFlags.Supported | IniFlags.Local, s_emptyGsr);
+            Register("assert.exception", IniFlags.Supported | IniFlags.Local, s_emptyGsr);
             Register("async_send", IniFlags.Unsupported | IniFlags.Local, s_emptyGsr);
             Register("auto_append_file", IniFlags.Unsupported | IniFlags.Global, s_emptyGsr);
             Register("auto_detect_line_endings", IniFlags.Unsupported | IniFlags.Local, s_emptyGsr);
@@ -267,6 +273,7 @@ namespace Pchp.Library
             Register("output_handler", IniFlags.Supported | IniFlags.Global, s_emptyGsr);
             Register("post_max_size", IniFlags.Supported | IniFlags.Global | IniFlags.Http, gsrcore);
             Register("precision", IniFlags.Supported | IniFlags.Local, gsrcore);
+            Register("register_globals", IniFlags.Supported | IniFlags.Global, gsrcore);
             Register("register_argc_argv", IniFlags.Supported | IniFlags.Global, s_emptyGsr);
             Register("report_memleaks", IniFlags.Unsupported | IniFlags.Global, s_emptyGsr);
             Register("safe_mode", IniFlags.Supported | IniFlags.Global, s_emptyGsr);
@@ -538,12 +545,33 @@ namespace Pchp.Library
         #endregion
     }
 
+    [PhpExtension("standard")]
     public static class Options
     {
         public const int INI_USER = (int)StandardPhpOptions.IniAccessability.User; // 1
         public const int INI_PERDIR = (int)StandardPhpOptions.IniAccessability.PerDirectory; // 2
         public const int INI_SYSTEM = (int)StandardPhpOptions.IniAccessability.System; // 4
         public const int INI_ALL = (int)StandardPhpOptions.IniAccessability.All; // 7
+
+        /// <summary>
+        /// Options for <see cref="assert_options"/>.
+        /// </summary>
+        public enum AssertWhat
+        {
+            active = 1,
+            callback = 2,
+            bail = 3,
+            warning = 4,
+            quiet_eval = 5,
+            exception = 6,
+        }
+
+        public const int ASSERT_ACTIVE = (int)AssertWhat.active;
+        public const int ASSERT_CALLBACK = (int)AssertWhat.callback;
+        public const int ASSERT_BAIL = (int)AssertWhat.bail;
+        public const int ASSERT_WARNING = (int)AssertWhat.warning;
+        public const int ASSERT_QUIET_EVAL = (int)AssertWhat.quiet_eval;
+        public const int ASSERT_EXCEPTION = (int)AssertWhat.exception;
 
         #region ini_get, ini_set, ini_restore, get_cfg_var, ini_alter, ini_get_all
 
@@ -556,8 +584,7 @@ namespace Pchp.Library
         [return: CastToFalse]
         public static string ini_get(Context ctx, string option)
         {
-            bool error;
-            var result = StandardPhpOptions.TryGetSet(ctx, ctx.Configuration, option, PhpValue.Void, StandardPhpOptions.IniAction.Get, out error);
+            var result = StandardPhpOptions.TryGetSet(ctx, ctx.Configuration, option, PhpValue.Null, StandardPhpOptions.IniAction.Get, out var error);
             if (error)
             {
                 return null;
@@ -578,8 +605,7 @@ namespace Pchp.Library
         [return: CastToFalse]
         public static string ini_set(Context ctx, string option, PhpValue value)
         {
-            bool error;
-            var old = StandardPhpOptions.TryGetSet(ctx, ctx.Configuration, option, value, StandardPhpOptions.IniAction.Set, out error);
+            var old = StandardPhpOptions.TryGetSet(ctx, ctx.Configuration, option, value, StandardPhpOptions.IniAction.Set, out var error);
             if (error)
             {
                 return null;
@@ -607,7 +633,7 @@ namespace Pchp.Library
             else
             {
                 // TODO: Err, see TryGetSet() errors
-                throw new ArgumentException("option_not_supported");
+                throw new ArgumentException(string.Format(Resources.LibResources.option_not_supported, option));
             }
         }
 
@@ -710,5 +736,46 @@ namespace Pchp.Library
         /// <returns>Always FALSE on .NET.</returns>
         // [return: CastToFalse]
         public static bool/*|string*/ php_ini_scanned_files() => false;
+
+        /// <summary>
+        /// Set/get the various assert flags.
+        /// </summary>
+        /// <remarks>This is a wrapper over <see cref="ini_get"/>, <see cref="ini_set"/> and <see cref="ini_restore"/>, passing <c>assert./what/</c> option.</remarks>
+        [Obsolete("As of PHP 7.0.0, the use of assert_options() is discouraged.")]
+        public static PhpValue assert_options(Context ctx, AssertWhat what, PhpValue value = default)
+        {
+            switch (what)
+            {
+                case AssertWhat.active:
+                case AssertWhat.callback:
+                case AssertWhat.bail:
+                case AssertWhat.warning:
+                case AssertWhat.quiet_eval:
+                case AssertWhat.exception:
+
+                    var option_name = "assert." + what.ToString();
+
+                    if (value.IsDefault)
+                    {
+                        // ini_get()
+                        return ini_get(ctx, option_name);
+                    }
+                    else if (value.IsString(out var str) && str == string.Empty)
+                    {
+                        // ini_restore()
+                        ini_restore(ctx, option_name);
+                        return PhpValue.False;
+                    }
+                    else
+                    {
+                        // ini_set()
+                        return ini_set(ctx, option_name, value);
+                    }
+
+                default:
+                    PhpException.InvalidArgument(nameof(what));
+                    return PhpValue.False;
+            }
+        }
     }
 }

@@ -184,7 +184,7 @@ namespace Pchp.Core
         /// The buffer may already exist or new one may be created.
         /// Works on the current level of buffering.
         /// </remarks>
-        private int AllocateBuffer(int sizeNeeded, bool binary, out System.Array buffer, out int position)
+        private int AllocateBuffer(int sizeNeeded, bool binary, out Array buffer, out int position)
         {
             Debug.Assert(_level != null);
 
@@ -277,7 +277,7 @@ namespace Pchp.Core
 
             if (top != 0)
             {
-                _level = (LevelElement)_levels[top - 1];
+                _level = _levels[top - 1];
                 return top - 1;
             }
             else
@@ -472,6 +472,7 @@ namespace Pchp.Core
                 if (_level.Index == 0)
                 {
                     // TODO: PhpString buffers
+                    // NOTE: avoid calling non-async on ASP.NET Core 3.0; consider changing to async
 
                     // writes top-level data to sinks:
                     for (int i = 0; i < _level.buffers.Count; i++)
@@ -483,7 +484,10 @@ namespace Pchp.Core
                         }
                         else
                         {
-                            _byteSink.Write((byte[])element.data, 0, element.size);
+                            _byteSink
+                                .WriteAsync((byte[])element.data, 0, element.size)
+                                .GetAwaiter()
+                                .GetResult();
                         }
                     }
                 }
@@ -702,7 +706,7 @@ namespace Pchp.Core
         internal void WriteInternal(Array value, bool binary, int index, int count)
         {
             int position;
-            System.Array buffer;
+            Array buffer;
             int length = count;
             int chunk;
 
@@ -794,7 +798,7 @@ namespace Pchp.Core
         {
             if (_levels != null && filter != null)
                 for (int i = 0; i < Level; i++)
-                    if (_levels[i].filter == filter)
+                    if (ReferenceEquals(_levels[i].filter, filter))
                         return i;
 
             return -1;

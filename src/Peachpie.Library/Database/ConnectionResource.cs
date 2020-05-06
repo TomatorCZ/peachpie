@@ -61,10 +61,9 @@ namespace Pchp.Library.Database
         /// <summary>
         /// Constructs the connection resource.
         /// </summary>
-        /// <param name="ctx">Runtime context.</param>
         /// <param name="connectionString"></param>
         /// <param name="resourceTypeName"></param>
-        protected ConnectionResource(Context ctx, string connectionString, string resourceTypeName)
+        protected ConnectionResource(string connectionString, string resourceTypeName)
             : base(resourceTypeName)
         {
             Debug.Assert(connectionString != null);
@@ -125,11 +124,10 @@ namespace Pchp.Library.Database
         /// <summary>
 		/// Gets a query result resource.
 		/// </summary>
-		/// <param name="connection">Database connection.</param>
 		/// <param name="reader">Data reader to be used for result resource population.</param>
 		/// <param name="convertTypes">Whether to convert data types to PHP ones.</param>
 		/// <returns>Result resource holding all resulting data of the query.</returns>
-		protected abstract ResultResource GetResult(ConnectionResource/*!*/ connection, IDataReader/*!*/ reader, bool convertTypes);
+		protected abstract ResultResource GetResult(IDataReader/*!*/ reader, bool convertTypes);
 
         /// <summary>
         /// Creates a command instance.
@@ -166,7 +164,7 @@ namespace Pchp.Library.Database
 		public virtual void ClosePendingReader()
         {
             if (_pendingReader != null)
-            {   
+            {
                 _pendingReader.Close();
                 _pendingReader = null;
             }
@@ -197,7 +195,7 @@ namespace Pchp.Library.Database
         /// <returns>PhpDbResult class representing the data read from database.</returns>
         /// <exception cref="ArgumentNullException"><paramref name="procedureName"/> is a <B>null</B> reference.</exception>
         /// <exception cref="PhpException">Procedure execution failed (Warning).</exception>
-        public ResultResource ExecuteProcedure(string/*!*/ procedureName, IEnumerable<IDataParameter> parameters, bool skipResults)
+        public ResultResource ExecuteProcedure(string/*!*/ procedureName, IList<IDataParameter> parameters, bool skipResults)
         {
             if (procedureName == null)
                 throw new ArgumentNullException("procedureName");
@@ -216,29 +214,36 @@ namespace Pchp.Library.Database
         /// <returns>PhpDbResult class representing the data read from database.</returns>
         /// <exception cref="ArgumentNullException"><paramref name="commandText"/> is a <B>null</B> reference.</exception>
         /// <exception cref="PhpException">Command execution failed (Warning).</exception>
-        public ResultResource ExecuteCommand(string/*!*/ commandText, CommandType commandType, bool convertTypes, IEnumerable<IDataParameter> parameters, bool skipResults)
+        public ResultResource ExecuteCommand(string/*!*/ commandText, CommandType commandType, bool convertTypes, IList<IDataParameter> parameters, bool skipResults)
         {
             if (commandText == null)
-                throw new ArgumentNullException("commandText");
+            {
+                throw new ArgumentNullException(nameof(commandText));
+            }
 
-            return (Connect())
-                ? ExecuteCommandInternal(commandText, commandType, convertTypes, parameters, skipResults)
-                : null;
+            if (Connect())
+            {
+                ClosePendingReader();   // needs to be closed before creating the command
+
+                var command = CreateCommand(commandText, commandType);
+
+                return ExecuteCommandProtected(command, convertTypes, parameters, skipResults);
+            }
+            else
+            {
+                return null;
+            }
         }
 
-        protected virtual ResultResource ExecuteCommandInternal(string/*!*/ commandText, CommandType commandType, bool convertTypes, IEnumerable<IDataParameter> parameters, bool skipResults)
+        protected virtual ResultResource ExecuteCommandProtected(IDbCommand command, bool convertTypes, IList<IDataParameter> parameters, bool skipResults)
         {
-            ClosePendingReader();
-
-            // IDbCommand
-            IDbCommand command = CreateCommand(commandText, commandType);
-
             if (parameters != null)
             {
                 command.Parameters.Clear();
-                foreach (IDataParameter parameter in parameters)
+
+                for (int iparam = 0; iparam < parameters.Count; iparam ++)
                 {
-                    command.Parameters.Add(parameter);
+                    command.Parameters.Add(parameters[iparam]);
                 }
             }
 
@@ -259,7 +264,7 @@ namespace Pchp.Library.Database
                     _lastResult = null;
 
                     // read all data into PhpDbResult:
-                    result = GetResult(this, reader, convertTypes);
+                    result = GetResult(reader, convertTypes);
                     result.command = command;
 
                     _lastResult = result;
@@ -278,7 +283,7 @@ namespace Pchp.Library.Database
         }
 
         /// <summary>
-		/// Reexecutes a command associated with a specified result resource to get schema of the command result.
+		/// Re-executes a command associated with a specified result resource to get schema of the command result.
 		/// </summary>
 		/// <param name="result">The result resource.</param>
 		internal void ReexecuteSchemaQuery(ResultResource/*!*/ result)

@@ -8,17 +8,16 @@ using Pchp.Library.Streams;
 using SixLabors.Fonts;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Advanced;
+using SixLabors.ImageSharp.Drawing;
+using SixLabors.ImageSharp.Drawing.Processing;
 using SixLabors.ImageSharp.Formats;
 using SixLabors.ImageSharp.Formats.Bmp;
 using SixLabors.ImageSharp.Formats.Gif;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Primitives;
 using SixLabors.ImageSharp.Processing;
 using SixLabors.ImageSharp.Processing.Processors.Transforms;
-using SixLabors.Primitives;
-using SixLabors.Shapes;
 
 namespace Peachpie.Library.Graphics
 {
@@ -92,6 +91,12 @@ namespace Peachpie.Library.Graphics
             /// </summary>
             XPM = 16,
 
+            WEBP = 32,
+
+            BMP = 64,
+
+            TGA = 128,
+
             /// <summary>
             /// A combinanation of IMG_ constants that are supported.
             /// </summary>
@@ -109,6 +114,9 @@ namespace Peachpie.Library.Graphics
         public const int IMG_PNG = (int)ImgType.PNG;
         public const int IMG_WBMP = (int)ImgType.WBMP;
         public const int IMG_XPM = (int)ImgType.XPM;
+        public const int IMG_WEBP = (int)ImgType.WEBP;
+        public const int IMG_BMP = (int)ImgType.BMP;
+        public const int IMG_TGA = (int)ImgType.TGA;
 
         #endregion
 
@@ -308,8 +316,7 @@ namespace Peachpie.Library.Graphics
         }
 
         /// <summary>
-        /// Return the types of images supported in a bitfield - 1=GIF, 2=JPEG, 4=PNG, 8=WBMP, 16=XPM
-        /// IMG_GIF | IMG_JPG | IMG_PNG | IMG_WBMP | IMG_XPM
+        /// Return the types of images supported in a bitfield of <c>IMG_*</c> constants.
         /// </summary> 
         public static int imagetypes()
         {
@@ -363,7 +370,7 @@ namespace Peachpie.Library.Graphics
                     .Crop(new Rectangle(src_x, src_y, src_w, src_h))
                     .Resize(dst_w, dst_h, resampler)))
             {
-                dst_img.Image.Mutate(o => o.DrawImage(cropped, new Point(dst_x, dst_y), GraphicsOptions.Default));
+                dst_img.Image.Mutate(o => o.DrawImage(cropped, new Point(dst_x, dst_y), new GraphicsOptions { /* GraphicsOptions */ }));
             }
 
             return true;
@@ -381,7 +388,7 @@ namespace Peachpie.Library.Graphics
         {
             var img = imagecreatecommon(x_size, y_size, new BmpConfigurationModule(), BmpFormat.Instance);
 
-            img.Image.Mutate(o => o.BackgroundColor(Rgba32.White));
+            img.Image.Mutate(o => o.BackgroundColor(Color.White));
             img.AlphaBlending = true;
 
             return img;
@@ -395,7 +402,7 @@ namespace Peachpie.Library.Graphics
         {
             var img = imagecreatecommon(x_size, y_size, new PngConfigurationModule(), PngFormat.Instance);
 
-            img.Image.Mutate(o => o.BackgroundColor(Rgba32.Black));
+            img.Image.Mutate(o => o.BackgroundColor(Color.Black));
             img.AlphaBlending = true;
 
             return img;
@@ -426,7 +433,7 @@ namespace Peachpie.Library.Graphics
 
             try
             {
-                return new PhpGdImageResource(Image.Load(image, out var format), format);
+                return new PhpGdImageResource(Image.Load<Rgba32>(image, out var format), format);
             }
             catch
             {
@@ -535,7 +542,10 @@ namespace Peachpie.Library.Graphics
             {
                 if (stream != null)
                 {
-                    try { img = Image.Load(configuration, stream, out format); }
+                    try
+                    {
+                        img = Image.Load<Rgba32>(configuration, stream, out format);
+                    }
                     catch { }
                 }
             }
@@ -666,7 +676,7 @@ namespace Peachpie.Library.Graphics
         }
 
         static Rgba32 FromRGB(long color) => new Rgba32((uint)color | 0xff000000u);
-        static Rgba32 FromRGBA(long color) => (color != (long)ColorValues.TRANSPARENT) ? new Rgba32((uint)color) : Rgba32.Transparent;
+        static Rgba32 FromRGBA(long color) => (color != (long)ColorValues.TRANSPARENT) ? new Rgba32((uint)color) : (Rgba32)Color.Transparent;
 
         private static int PHPColorToPHPAlpha(int color) => FromRGBA(color).A;
         private static int PHPColorToRed(int color) => FromRGBA(color).R;
@@ -1009,7 +1019,7 @@ namespace Peachpie.Library.Graphics
                 return false;
             }
 
-            img.tiled = new ImageBrush<Rgba32>(imgTile.Image);
+            img.tiled = new ImageBrush(imgTile.Image);
 
             return false;
         }
@@ -1239,8 +1249,14 @@ namespace Peachpie.Library.Graphics
         {
             return imagesave(ctx, im, to, (img, stream) =>
             {
-                img.Mutate(o => o.BackgroundColor(Rgba32.Transparent));
-                img.SaveAsGif(stream);
+                // use the source's encoder:
+                var encoder = img.GetConfiguration().ImageFormatsManager.FindEncoder(GifFormat.Instance) as GifEncoder;
+
+                // or use default encoding options
+                encoder ??= new GifEncoder(); // TODO: ColorTableMode from alocated colors count?
+
+                img.Mutate(o => o.BackgroundColor(Color.Transparent));
+                img.SaveAsGif(stream, encoder);
             });
         }
 
@@ -1281,7 +1297,14 @@ namespace Peachpie.Library.Graphics
                 // not specified stream or filename -> save to the output stream
                 if (Operators.IsEmpty(to)) // ~ is default or empty
                 {
-                    saveaction(img.Image, ctx.OutputStream);
+                    using (var ms = new MemoryStream())
+                    {
+                        saveaction(img.Image, ms);
+
+                        // use WriteAsync() always
+                        ms.Position = 0;
+                        ms.CopyToAsync(ctx.OutputStream).GetAwaiter().GetResult();
+                    }
                     return true;
                 }
 
@@ -1307,12 +1330,13 @@ namespace Peachpie.Library.Graphics
 
                 // save image to byte[] and pass it to php stream
 
-                var ms = new MemoryStream();
+                using (var ms = new MemoryStream())
+                {
+                    saveaction(img.Image, ms);
 
-                saveaction(img.Image, ms);
-
-                phpstream.WriteBytes(ms.ToArray());
-                phpstream.Flush();
+                    phpstream.WriteBytes(ms.ToArray());
+                    phpstream.Flush();
+                }
 
                 // stream is closed after the operation
                 phpstream.Dispose();
@@ -1444,7 +1468,7 @@ namespace Peachpie.Library.Graphics
             }
             else
             {
-                var brush = new SolidBrush<Rgba32>(GetAlphaColor(img, col));
+                var brush = new SolidBrush(GetAlphaColor(img, col));
                 img.Image.Mutate(o => o.Fill(brush, ellipse));
             }
 
@@ -1545,7 +1569,7 @@ namespace Peachpie.Library.Graphics
             var font = CreateFontById(fontInd);
             var color = FromRGBA(col);
 
-            img.Image.Mutate<Rgba32>(context => context.DrawText<Rgba32>(text, font, color, new PointF(x, y)));
+            img.Image.Mutate<Rgba32>(context => context.DrawText(text, font, color, new PointF(x, y)));
 
             return true;
         }
@@ -1569,11 +1593,11 @@ namespace Peachpie.Library.Graphics
         /// <summary>
         /// Returns the pixel size of a character in the specified font.
         /// </summary>
-        static SizeF imagefontsize(int fontInd)
+        static FontRectangle imagefontsize(int fontInd)
         {
             if (fontInd <= 0)
             {
-                return SizeF.Empty;
+                return FontRectangle.Empty;
             }
 
             var arr = _imagefontsize;
@@ -1607,7 +1631,7 @@ namespace Peachpie.Library.Graphics
         /// <summary>
         /// Cached pixel sizes of a built-in font character.
         /// </summary>
-        static SizeF[] _imagefontsize;
+        static FontRectangle[] _imagefontsize;
 
         #endregion
 
@@ -1625,17 +1649,27 @@ namespace Peachpie.Library.Graphics
             if (x < 0 || y < 0) return true;
             if (x > img.Image.Width || y > img.Image.Height) return true;
 
-            img.Image.Mutate(o => o.ApplyProcessor(new FloodFillProcessor<Rgba32>(new Point(x, y), FromRGBA(col), false, Rgba32.Red)));
+            img.Image.Mutate(o => o.ApplyProcessor(new FloodFillProcessor(new Point(x, y), FromRGBA(col), false, Color.Red)));
 
             return true;
         }
 
-        #region imagefilledarc
+        #endregion
+
+        #region imagearc, imagefilledarc
 
         /// <summary>
-        /// Draw a filled partial ellipse
+        /// Draws an arc of circle centered at the given coordinates.
         /// </summary>
-        public static bool imagefilledarc(PhpResource im, int cx, int cy, int w, int h, int s, int e, int col, int style)
+        public static bool imagearc(PhpResource image, long cx, long cy, long width, long height, int start, int end, long color)
+        {
+            return imagefilledarc(image, cx, cy, width, height, start, end, color, FilledArcStyles.PIE | FilledArcStyles.NOFILL);
+        }
+
+        /// <summary>
+        /// Draw a filled partial ellipse.
+        /// </summary>
+        public static bool imagefilledarc(PhpResource im, long cx, long cy, long w, long h, int s, long e, long col, FilledArcStyles style)
         {
             PhpGdImageResource img = PhpGdImageResource.ValidImage(im);
             if (img == null)
@@ -1646,13 +1680,13 @@ namespace Peachpie.Library.Graphics
             if (cx < 0 || cy < 0) return true;
             if (cx > image.Width || cy > image.Height) return true;
 
-            int range = 0;
+            long range = 0;
             AdjustAnglesAndSize(ref w, ref h, ref s, ref e, ref range);
 
             // Path Builder object to be used in all the branches
             PathBuilder pathBuilder = new PathBuilder();
             var color = FromRGBA(col);
-            var pen = new Pen<Rgba32>(color, 1);
+            var pen = new Pen(color, 1);
 
             // edge points, used for both pie and chord
             PointF startingPoint = new PointF(cx + (int)(Math.Cos(s * Math.PI / 180) * (w / 2.0)), cy + (int)(Math.Sin(s * Math.PI / 180) * (h / 2.0)));
@@ -1661,9 +1695,9 @@ namespace Peachpie.Library.Graphics
             image.Mutate<Rgba32>(context =>
             {
                 // All PIE variants - IMG_ARC_PIE = 0
-                if (style % 2 == 0)
+                if ((style & FilledArcStyles.CHORD) == 0)
                 {
-                    // Negative range menas that starting point is grreater than the ending one. Then we will create a correct arc by using the rest to 360 from range from the starting point
+                    // Negative range meens that starting point is greater than the ending one. Then we will create a correct arc by using the rest to 360 from range from the starting point
                     while (range < 0)
                         range += 360;
 
@@ -1679,9 +1713,9 @@ namespace Peachpie.Library.Graphics
                     pathBuilder.AddLine(lastPoint, endingPoint);
 
                     // Draw the prepared lines or fill the pie
-                    if (style == ((int)FilledArcStyles.PIE | (int)FilledArcStyles.NOFILL))
+                    if (style == (FilledArcStyles.PIE | FilledArcStyles.NOFILL))
                     {
-                        context.Draw<Rgba32>(pen, pathBuilder.Build());
+                        context.Draw(pen, pathBuilder.Build());
                     }
                     else
                     {
@@ -1689,14 +1723,14 @@ namespace Peachpie.Library.Graphics
                         pathBuilder.AddLine(endingPoint, new PointF(cx, cy));
                         pathBuilder.AddLine(new PointF(cx, cy), startingPoint);
 
-                        if (style == ((int)FilledArcStyles.PIE | (int)FilledArcStyles.NOFILL | (int)FilledArcStyles.EDGED))
+                        if (style == (FilledArcStyles.PIE | FilledArcStyles.NOFILL | FilledArcStyles.EDGED))
                         {
-                            context.Draw<Rgba32>(pen, pathBuilder.Build());
+                            context.Draw(pen, pathBuilder.Build());
                         }
                         else
                         {
                             //Last not-excluded option for PIE, a simple filled PIE
-                            context.Fill<Rgba32>(color, pathBuilder.Build());
+                            context.Fill(color, pathBuilder.Build());
                         }
                     }
                 }
@@ -1705,9 +1739,9 @@ namespace Peachpie.Library.Graphics
                 {
                     pathBuilder.AddLine(startingPoint, endingPoint);
 
-                    if (style == ((int)FilledArcStyles.CHORD | (int)FilledArcStyles.NOFILL))
+                    if (style == (FilledArcStyles.CHORD | FilledArcStyles.NOFILL))
                     {
-                        context.Draw<Rgba32>(pen, pathBuilder.Build());
+                        context.Draw(pen, pathBuilder.Build());
                     }
                     else
                     {
@@ -1715,22 +1749,20 @@ namespace Peachpie.Library.Graphics
                         pathBuilder.AddLine(endingPoint, new PointF(cx, cy));
                         pathBuilder.AddLine(new PointF(cx, cy), startingPoint);
 
-                        if (style == ((int)FilledArcStyles.CHORD | (int)FilledArcStyles.NOFILL | (int)FilledArcStyles.EDGED))
+                        if (style == (FilledArcStyles.CHORD | FilledArcStyles.NOFILL | FilledArcStyles.EDGED))
                         {
-                            context.Draw<Rgba32>(pen, pathBuilder.Build());
+                            context.Draw(pen, pathBuilder.Build());
                         }
                         else
                         {
                             // Last remaining option is to fill the chord arc
-                            context.Fill<Rgba32>(color, pathBuilder.Build());
+                            context.Fill(color, pathBuilder.Build());
                         }
                     }
                 }
             });
             return true;
         }
-
-        #endregion
 
         #endregion
 
@@ -1742,7 +1774,7 @@ namespace Peachpie.Library.Graphics
         /// <param name="s"></param>
         /// <param name="e"></param>
         /// <param name="range"></param>
-        private static void AdjustAnglesAndSize(ref int w, ref int h, ref int s, ref int e, ref int range)
+        private static void AdjustAnglesAndSize(ref long w, ref long h, ref int s, ref long e, ref long range)
         {
             if (w < 0) w = 0;
             if (h < 0) h = 0;
@@ -1906,7 +1938,7 @@ namespace Peachpie.Library.Graphics
 
             if (filled)
             {
-                IBrush<Rgba32> brush;
+                IBrush brush;
 
                 switch (col)
                 {
@@ -1920,7 +1952,7 @@ namespace Peachpie.Library.Graphics
                         brush = img.brushed;
                         break;
                     default:
-                        brush = new SolidBrush<Rgba32>(FromRGBA(col));
+                        brush = new SolidBrush(FromRGBA(col));
                         break;
                 }
 
@@ -1928,14 +1960,290 @@ namespace Peachpie.Library.Graphics
             }
             else
             {
-                img.Image.Mutate(o => o.DrawPolygon(new Pen<Rgba32>(FromRGBA(col), 1.0f), points));
+                img.Image.Mutate(o => o.DrawPolygon(new Pen(FromRGBA(col), 1.0f), points));
             }
 
             return true;
         }
 
         #endregion
+
+        #endregion
+
+        #region imageflip, imagecrop, imagescale, imageaffine
+
+        public const int IMG_FLIP_HORIZONTAL = 1;
+        public const int IMG_FLIP_VERTICAL = 2;
+        public const int IMG_FLIP_BOTH = 3;
+        public const int IMG_NEAREST_NEIGHBOUR = 16;
+        public const int IMG_BILINEAR_FIXED = 3;
+        public const int IMG_BICUBIC = 4;
+        public const int IMG_BICUBIC_FIXED = 5;
+
+        /// <summary>
+        /// Flips an image using a given mode
+        /// </summary>
+        /// <param name="image">An image resource, returned by one of the image creation functions, such as imagecreatetruecolor().</param>
+        /// <param name="mode">Flip mode, this can be one of the IMG_FLIP_* constants:</param>
+        /// <returns>Returns TRUE on success or FALSE on failure.</returns>
+        public static bool imageflip(PhpResource image, int mode)
+        {
+            var img = PhpGdImageResource.ValidImage(image);
+            if (img == null)
+            {
+                return false;
+            }
+
+            switch (mode)
+            {
+                case IMG_FLIP_HORIZONTAL:
+                    img.Image.Mutate(o => o.Flip(FlipMode.Horizontal));
+                    break;
+                case IMG_FLIP_VERTICAL:
+                    img.Image.Mutate(o => o.Flip(FlipMode.Vertical));
+                    break;
+                case IMG_FLIP_BOTH:
+                    img.Image.Mutate(o => o.Flip(FlipMode.Horizontal));
+                    img.Image.Mutate(o => o.Flip(FlipMode.Vertical));
+                    break;
+                default:
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Crops an image to the given rectangular area and returns the resulting image. The given image is not modified.
+        /// </summary>
+        /// <param name="image">An image resource, returned by one of the image creation functions, such as imagecreatetruecolor().</param>
+        /// <param name="rect">The cropping rectangle as array with keys x, y, width and height.</param>
+        /// <returns>Return cropped image resource on success or FALSE on failure.</returns>
+        [return: CastToFalse]
+        public static PhpResource imagecrop(PhpResource image, PhpArray rect)
+        {
+            var img = PhpGdImageResource.ValidImage(image);
+            if (img == null)
+            {
+                return null;
+            }
+
+            if (!rect.TryGetValue("x", out var x) | !rect.TryGetValue("y", out var y) | !rect.TryGetValue("width", out var width) | !rect.TryGetValue("height", out var height))
+            {
+                PhpException.Throw(PhpError.Warning, Resources.missing_params);
+                return null;
+            }
+
+            Rectangle rectangle = default;
+
+            try
+            {
+                rectangle.X = (int)StrictConvert.ToLong(x);
+                rectangle.Y = (int)StrictConvert.ToLong(y);
+                rectangle.Width = (int)StrictConvert.ToLong(width);
+                rectangle.Height = (int)StrictConvert.ToLong(height);
+            }
+            catch //
+            {
+                PhpException.Throw(PhpError.Warning, Resources.wrong_type);
+                return null;
+            }
+
+            // Makes bigger image and then crops it. 
+            if (rectangle.Right > img.Image.Width ||
+                rectangle.Bottom > img.Image.Height)
+            {
+                var resized = new PhpGdImageResource(new Image<Rgba32>(
+                    Math.Max(rectangle.Right, img.Image.Width),
+                    Math.Max(rectangle.Bottom, img.Image.Height)),
+                    img.Format);
+                resized.Image.Mutate(o => o.DrawImage(img.Image, 1).Crop(rectangle));
+                return resized;
+            }
+
+            return new PhpGdImageResource(img.Image.Clone(o => o.Crop(rectangle)), img.Format);
+        }
+
+        /// <summary>
+        /// Scale an image using the given new width and height
+        /// </summary>
+        /// <param name="image">An image resource, returned by one of the image creation functions, such as imagecreatetruecolor().</param>
+        /// <param name="new_width">The width to scale the image to.</param>
+        /// <param name="new_height">The height to scale the image to.If omitted or negative, the aspect ratio will be preserved.</param>
+        /// <param name="mode"></param>
+        /// <returns>Return the scaled image resource on success or FALSE on failure.</returns>
+        [return: CastToFalse]
+        public static PhpResource imagescale(PhpResource image, int new_width, int new_height = -1, int mode = IMG_BILINEAR_FIXED)
+        {
+            // TODO: Description mode
+            // TODO: modes fixed
+            var img = PhpGdImageResource.ValidImage(image);
+            if (img == null)
+            {
+                return null;
+            }
+
+            if (new_height < 0 && new_width < 0)
+            {
+                PhpException.InvalidArgument(nameof(new_width));
+                return null;
+            }
+
+            new_height = new_height < 0 ? (img.Image.Height / img.Image.Width) * new_width : new_height;
+            new_width = new_width < 0 ? (img.Image.Width / img.Image.Height) * new_height : new_width;
+
+            IResampler res;
+            switch (mode)
+            {
+                case IMG_NEAREST_NEIGHBOUR:
+                    res = new NearestNeighborResampler();
+                    break;
+                case IMG_BICUBIC:
+                    res = new BicubicResampler();
+                    break;
+                case IMG_BILINEAR_FIXED:
+                    res = new TriangleResampler();
+                    break;
+                case IMG_BICUBIC_FIXED:
+                    throw new NotSupportedException();
+                default:
+                    return null;
+            }
+
+            return new PhpGdImageResource(img.Image.Clone(o => o.Resize(new_width, new_height, res)), img.Format);
+        }
+
+        /// <summary>
+        /// Return an image containing the affine transformed src image, using an optional clipping area
+        /// </summary>
+        /// <param name="image">An image resource, returned by one of the image creation functions, such as imagecreatetruecolor().</param>
+        /// <param name="affine">Array with keys 0 to 5.</param>
+        /// <param name="clip">Array with keys "x", "y", "width" and "height".</param>
+        /// <returns>Return affined image resource on success or FALSE on failure.</returns>
+        [return: CastToFalse]
+        public static PhpResource imageaffine(PhpResource image, PhpArray affine, PhpArray clip = null)
+        {
+            var img = PhpGdImageResource.ValidImage(image);
+            if (img == null)
+            {
+                return null;
+            }
+
+            Matrix3x2 affineMatrix = default;
+            Rectangle sourceBox = new Rectangle(0, 0, img.Image.Width, img.Image.Height);
+
+            // Process Arguments
+
+            if (affine.TryGetValue(0, out var n_11) & affine.TryGetValue(1, out var n_12) |
+                affine.TryGetValue(2, out var n_21) & affine.TryGetValue(3, out var n_22) |
+                affine.TryGetValue(4, out var n_31) & affine.TryGetValue(5, out var n_32))
+            {
+                if (TryGetFloat(n_11, out affineMatrix.M11) &
+                    TryGetFloat(n_12, out affineMatrix.M12) &
+                    TryGetFloat(n_21, out affineMatrix.M21) &
+                    TryGetFloat(n_22, out affineMatrix.M22) &
+                    TryGetFloat(n_31, out affineMatrix.M31) &
+                    TryGetFloat(n_32, out affineMatrix.M32))
+                {
+                    // ok
+                }
+                else
+                {
+                    PhpException.Throw(PhpError.Warning, Resources.wrong_type);
+                    return null;
+                }
+            }
+            else
+            {
+                PhpException.Throw(PhpError.Warning, Resources.affine_array_number_of_params);
+                return null;
+            }
+
+            if (clip != null) // Check Arguments if clip exists
+            {
+                if (clip.TryGetValue("x", out var x) &
+                    clip.TryGetValue("y", out var y) &
+                    clip.TryGetValue("width", out var width) &
+                    clip.TryGetValue("height", out var height))
+                {
+                    try
+                    {
+                        sourceBox.X = (int)StrictConvert.ToLong(x);
+                        sourceBox.Y = (int)StrictConvert.ToLong(y);
+                        sourceBox.Width = (int)StrictConvert.ToLong(width);
+                        sourceBox.Height = (int)StrictConvert.ToLong(height);
+                    }
+                    catch // (Pchp.Library.Spl.TypeError)
+                    {
+                        PhpException.Throw(PhpError.Warning, Resources.wrong_type);
+                        return null;
+                    }
+                }
+                else
+                {
+                    PhpException.Throw(PhpError.Warning, Resources.missing_params);
+                    return null;
+                }
+            }
+
+            // Calculate translation
+            var extent = new PointF[4]
+            {
+                new PointF(0, 0),
+                new PointF(img.Image.Width, 0),
+                new PointF(img.Image.Width, img.Image.Height),
+                new PointF(0, img.Image.Height)
+            };
+
+            for (int i = 0; i < extent.Length; i++)
+            {
+                extent[i] = ApplyAffineToPointF(extent[i], affineMatrix);
+            }
+
+            PointF min = extent[0];
+            for (int i = 1; i < 4; i++)
+            {
+                if (min.X > extent[i].X)
+                    min.X = extent[i].X;
+                if (min.Y > extent[i].Y)
+                    min.Y = extent[i].Y;
+            }
+
+            var translationMatrix = new Matrix3x2(1, 0, 0, 1, -min.X, -min.Y);
+
+            AffineTransformBuilder builder =
+                new AffineTransformBuilder().AppendMatrix(affineMatrix).AppendMatrix(translationMatrix);
+
+            var transformed = img.Image.Clone(o => o.Transform(sourceBox, builder, new TriangleResampler()));
+
+            return new PhpGdImageResource(transformed, img.Format);
+        }
+
+        static bool TryGetFloat(PhpValue value, out float number)
+        {
+            switch (value.TypeCode)
+            {
+                case PhpTypeCode.Boolean: number = value.Boolean ? 1 : 0; return true;
+                case PhpTypeCode.Long: number = value.Long; return true;
+                case PhpTypeCode.Double: number = (float)value.Double; return true;
+                //PhpTypeCode.Null : 0,
+                //PhpTypeCode.String
+                case PhpTypeCode.Alias: return TryGetFloat(value.Alias.Value, out number);
+                default:
+                    PhpException.Throw(PhpError.Warning, Resources.wrong_type);
+                    number = default;
+                    return false;
+            }
+        }
+
+        private static PointF ApplyAffineToPointF(PointF point, Matrix3x2 affine)
+        {
+            var x = point.X;
+            var y = point.Y;
+            return new PointF(x * affine.M11 + y * affine.M21 + affine.M31, x * affine.M12 + y * affine.M22 + affine.M32);
+        }
+
+        #endregion
     }
 
-    #endregion
 }

@@ -1,9 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Pchp.Core.Reflection;
 
 namespace Pchp.Core
 {
@@ -12,45 +14,40 @@ namespace Pchp.Core
     [DebuggerNonUserCode, DebuggerStepThrough]
     partial struct PhpValue
     {
+        static string UndefinedTypeName => "undefined";
+
         /// <summary>
         /// Debug textual representation of the value.
         /// </summary>
-        public string DisplayString => IsDefault ? "undefined" : _type.DisplayString(ref this);
+        public string DisplayString => TypeCode switch
+        {
+            PhpTypeCode.Null => "null",    // lowercased `null` as it is shown for other CLR null references,
+            PhpTypeCode.Boolean => Boolean ? PhpVariable.True : PhpVariable.False, // CONSIDER: CLR's True/False
+            PhpTypeCode.Long => Long.ToString(),
+            PhpTypeCode.Double => Double.ToString(CultureInfo.InvariantCulture),
+            PhpTypeCode.PhpArray => "array (length = " + Array.Count.ToString() + ")",
+            PhpTypeCode.String => "'" + String + "'",
+            PhpTypeCode.MutableString => "'" + MutableStringBlob.ToString() + "'",
+            PhpTypeCode.Object => (Object is PhpResource resource)
+                ? $"resource id='{resource.Id}' type='{resource.TypeName}'"
+                : Object.GetPhpTypeInfo().Name + "#" + Object.GetHashCode().ToString("X"),
+            PhpTypeCode.Alias => "&" + Alias.Value.DisplayString,
+            _ => "invalid",
+        };
 
         /// <summary>
         /// Gets php type name of the value.
         /// </summary>
-        internal string DebugTypeName => IsSet ? PhpVariable.GetTypeName(this) : PhpVariable.TypeNameVoid;
+        internal string DebugTypeName => PhpVariable.GetTypeName(this);
 
-        [DebuggerDisplay("{_value.DisplayString,nq}", Type = "{_value.DebugTypeName,nq}")]
-        internal sealed class PhpValueDebugView
+        sealed class PhpValueDebugView
         {
-            readonly PhpValue _value;
-
             [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
-            public object DebugValue
-            {
-                get
-                {
-                    switch (_value.TypeCode)
-                    {
-                        case PhpTypeCode.Alias: return _value.Alias;
-                        case PhpTypeCode.Boolean: return _value.Boolean;
-                        case PhpTypeCode.Double: return _value.Double;
-                        case PhpTypeCode.Int32: return (int)_value.Long;
-                        case PhpTypeCode.Long: return _value.Long;
-                        case PhpTypeCode.Object: return _value.Object;
-                        case PhpTypeCode.PhpArray: return _value.Array;
-                        case PhpTypeCode.String: return _value.String;
-                        case PhpTypeCode.MutableString: return _value.MutableString.ToString();
-                        default: return null;
-                    }
-                }
-            }
+            public object DebugValue { get; }
 
             public PhpValueDebugView(PhpValue value)
             {
-                _value = value;
+                DebugValue = value.ToClr();
             }
         }
     }

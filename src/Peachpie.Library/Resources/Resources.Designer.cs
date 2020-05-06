@@ -61,6 +61,15 @@ namespace Pchp.Library.Resources {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to {0}::__serialize() must return an array.
+        /// </summary>
+        public static string @__serialize_must_return_array {
+            get {
+                return ResourceManager.GetString("__serialize_must_return_array", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Additional parameters not supported.
         /// </summary>
         public static string additional_parameters_not_supported {
@@ -646,7 +655,7 @@ namespace Pchp.Library.Resources {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to No asynchronous transfer to continue..
+        ///   Looks up a localized string similar to No asynchronous (non-blocking) transfer to continue..
         /// </summary>
         public static string ftp_error_no_nb {
             get {
@@ -1204,6 +1213,69 @@ namespace Pchp.Library.Resources {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Key length cannot be set for the cipher method.
+        /// </summary>
+        public static string openssl_cannot_set_iv_length {
+            get {
+                return ResourceManager.GetString("openssl_cannot_set_iv_length", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Using an empty Initialization Vector (iv) is potentially insecure and not recommended.
+        /// </summary>
+        public static string openssl_empty_iv {
+            get {
+                return ResourceManager.GetString("openssl_empty_iv", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to IV passed is {0} bytes long which is longer than the {1} expected by selected cipher, truncating.
+        /// </summary>
+        public static string openssl_long_iv {
+            get {
+                return ResourceManager.GetString("openssl_long_iv", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to IV passed is only {0} bytes long, cipher expects an IV of precisely {1} bytes, padding with \0.
+        /// </summary>
+        public static string openssl_short_iv {
+            get {
+                return ResourceManager.GetString("openssl_short_iv", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Unknown cipher algorithm.
+        /// </summary>
+        public static string openssl_unknown_cipher {
+            get {
+                return ResourceManager.GetString("openssl_unknown_cipher", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Unknown signature algorithm.
+        /// </summary>
+        public static string openssl_unknown_hash {
+            get {
+                return ResourceManager.GetString("openssl_unknown_hash", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Supplied parameter cannot be coerced into an X509 certificate!.
+        /// </summary>
+        public static string openssl_X509_cannot_be_coerced {
+            get {
+                return ResourceManager.GetString("openssl_X509_cannot_be_coerced", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Option &apos;{0}&apos; has already been registered..
         /// </summary>
         public static string option_already_registered {
@@ -1524,6 +1596,15 @@ namespace Pchp.Library.Resources {
         public static string surrogate_selector_unsupported {
             get {
                 return ResourceManager.GetString("surrogate_selector_unsupported", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Sleep until to time is less than current time.
+        /// </summary>
+        public static string time_sleep_until_in_past {
+            get {
+                return ResourceManager.GetString("time_sleep_until_in_past", resourceCulture);
             }
         }
         

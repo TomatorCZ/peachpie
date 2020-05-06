@@ -1,9 +1,10 @@
 <?php
+namespace hash\password_hash_004;
 /**Test PASSWORD_ARGON2ID with options. */
 $password = "rasmuslerdorf";
 $memory_cost = 512;
 $time_cost = 4.3;
-$threads = "3";
+$threads = "1";
 
 $options = [
     'threads' => $threads,

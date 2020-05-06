@@ -55,19 +55,13 @@ namespace Peachpie.Library.Scripting
         static IEnumerable<string> MetadataReferences()
         {
             // implicit references
-            var impl = new List<Assembly>()
+            var impl = new List<Assembly>(8)
             {
                 typeof(object).Assembly,                 // mscorlib (or System.Runtime)
                 typeof(Pchp.Core.Context).Assembly,      // Peachpie.Runtime
                 typeof(Pchp.Library.Strings).Assembly,   // Peachpie.Library
                 typeof(ScriptingProvider).Assembly,      // Peachpie.Library.Scripting
             };
-
-            var xmlDomType = Type.GetType(Assembly.CreateQualifiedName("Peachpie.Library.XmlDom", "Peachpie.Library.XmlDom.XmlDom"));
-            if (xmlDomType != null)
-            {
-                impl.Add(xmlDomType.Assembly);
-            }
 
             var set = new HashSet<Assembly>();
 
@@ -170,11 +164,13 @@ namespace Peachpie.Library.Scripting
 
         static int _counter = 0;
 
-        const string s_submissionAssemblyNamePrefix = "<submission>`";
+        const string s_submissionAssemblyNamePrefix = "<eval>`";
 
         public AssemblyName GetNewSubmissionName()
         {
-            return new AssemblyName(s_submissionAssemblyNamePrefix + (_counter++).ToString());
+            var id = Interlocked.Increment(ref _counter);
+
+            return new AssemblyName(s_submissionAssemblyNamePrefix + id.ToString());
         }
     }
 }

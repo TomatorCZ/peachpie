@@ -50,6 +50,28 @@ namespace Pchp.CodeAnalysis.CommandLine
             return TryParseOption(arg, out name, out value);
         }
 
+        /// <summary>
+        /// Extends support for encoding names in additon to codepages.
+        /// </summary>
+        static new Encoding TryParseEncodingName(string arg)
+        {
+            try
+            {
+                var encoding = Encoding.GetEncoding(arg);
+                if (encoding != null)
+                {
+                    return encoding;
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            // default behavior:
+            return CommandLineParser.TryParseEncodingName(arg);
+        }
+
         IEnumerable<CommandLineSourceFile> ExpandFileArgument(string path, string baseDirectory, List<Diagnostic> diagnostics)
         {
             if (string.IsNullOrEmpty(path))
@@ -149,8 +171,9 @@ namespace Pchp.CodeAnalysis.CommandLine
             string runtimeMetadataVersion = null; // will be read from cor library if not specified in cmd
             string compilationName = null;
             string versionString = null;
+            Encoding codepage = null;
             bool embedAllSourceFiles = false;
-            bool optimize = false;
+            PhpOptimizationLevel optimization = PhpOptimizationLevel.Debug;
             bool concurrentBuild = true;
             var diagnosticOptions = new Dictionary<string, ReportDiagnostic>();
             PhpDocTypes phpdocTypes = PhpDocTypes.None;
@@ -166,13 +189,16 @@ namespace Pchp.CodeAnalysis.CommandLine
             string keyContainerSetting = null;
             bool publicSign = false;
             bool shortOpenTags = false;
+            bool printFullPaths = false;
             bool resourcesOrModulesSpecified = false;
             DebugInformationFormat debugInformationFormat = DebugInformationFormat.Pdb;
             List<string> referencePaths = new List<string>();
             List<string> keyFileSearchPaths = new List<string>();
+            var autoload_classmapfiles = new HashSet<string>(StringComparer.InvariantCultureIgnoreCase);
+            var autoload_psr4 = new List<(string prefix, string path)>();
+
             if (sdkDirectoryOpt != null) referencePaths.Add(sdkDirectoryOpt);
             if (!string.IsNullOrEmpty(additionalReferenceDirectories)) referencePaths.AddRange(additionalReferenceDirectories.Split(new char[] { ';' }, StringSplitOptions.RemoveEmptyEntries));
-            var loggers = new List<string>();
 
             foreach (string arg in flattenedArgs)
             {
@@ -195,6 +221,24 @@ namespace Pchp.CodeAnalysis.CommandLine
                     case "d":
                     case "define":
                         ParseDefine(value, defines);
+                        continue;
+
+                    case "codepage":
+                        value = RemoveQuotesAndSlashes(value);
+                        if (value == null)
+                        {
+                            diagnostics.Add(Errors.MessageProvider.Instance.CreateDiagnostic(Errors.ErrorCode.ERR_SwitchNeedsValue, Location.None, name));
+                            continue;
+                        }
+
+                        var encoding = TryParseEncodingName(value);
+                        if (encoding == null)
+                        {
+                            diagnostics.Add(Errors.MessageProvider.Instance.CreateDiagnostic(Errors.ErrorCode.FTL_BadCodepage, Location.None, value));
+                            continue;
+                        }
+
+                        codepage = encoding;
                         continue;
 
                     case "r":
@@ -262,10 +306,27 @@ namespace Pchp.CodeAnalysis.CommandLine
                     case "optimize":
                     case "o+":
                     case "optimize+":
-                        if (value != null)
-                            break;
+                        if (value == null)
+                        {
+                            optimization = PhpOptimizationLevel.Release;
+                        }
+                        else if (bool.TryParse(value, out var optimizationBool))
+                        {
+                            optimization = optimizationBool ? PhpOptimizationLevel.Release : PhpOptimizationLevel.Debug;
+                        }
+                        else if (int.TryParse(value, out var optimizationNumber) && Enum.IsDefined(typeof(PhpOptimizationLevel), optimizationNumber))
+                        {
+                            optimization = (PhpOptimizationLevel)optimizationNumber;
+                        }
+                        else if (Enum.TryParse(value, true, out optimization))
+                        {
+                            //
+                        }
+                        else
+                        {
+                            diagnostics.Add(Errors.MessageProvider.Instance.CreateDiagnostic(Errors.ErrorCode.ERR_BadCompilationOptionValue, Location.None, name, value));
+                        }
 
-                        optimize = true;
                         continue;
 
                     case "o-":
@@ -273,7 +334,7 @@ namespace Pchp.CodeAnalysis.CommandLine
                         if (value != null)
                             break;
 
-                        optimize = false;
+                        optimization = PhpOptimizationLevel.Debug;
                         continue;
 
                     case "p":
@@ -316,7 +377,7 @@ namespace Pchp.CodeAnalysis.CommandLine
                         }
                         else if (string.Equals(value, "default", StringComparison.OrdinalIgnoreCase) || string.Equals(value, "latest", StringComparison.OrdinalIgnoreCase))
                         {
-                            languageVersion = null; // latest
+                            languageVersion = null; // default
                         }
                         else if (!Version.TryParse(value, out languageVersion))
                         {
@@ -406,7 +467,14 @@ namespace Pchp.CodeAnalysis.CommandLine
                         continue;
 
                     case "shortopentag":
-                        shortOpenTags = string.IsNullOrEmpty(value) || (RemoveQuotesAndSlashes(value).ToLowerInvariant() == "true");
+                        if (string.IsNullOrEmpty(value))
+                        {
+                            shortOpenTags = true;
+                        }
+                        else if (!bool.TryParse(RemoveQuotesAndSlashes(value), out shortOpenTags))
+                        {
+                            diagnostics.Add(Errors.MessageProvider.Instance.CreateDiagnostic(Errors.ErrorCode.ERR_BadCompilationOptionValue, Location.None, name, value));
+                        }
                         continue;
 
                     case "shortopentag+":
@@ -433,6 +501,20 @@ namespace Pchp.CodeAnalysis.CommandLine
                         else
                         {
                             mainTypeName = unquoted;
+                        }
+                        continue;
+
+                    case "fullpaths":
+                        if (value != null)
+                        {
+                            if (!bool.TryParse(RemoveQuotesAndSlashes(value), out printFullPaths))
+                            {
+                                diagnostics.Add(Errors.MessageProvider.Instance.CreateDiagnostic(Errors.ErrorCode.ERR_BadCompilationOptionValue, Location.None, name, value));
+                            }
+                        }
+                        else
+                        {
+                            printFullPaths = true;
                         }
                         continue;
 
@@ -561,13 +643,6 @@ namespace Pchp.CodeAnalysis.CommandLine
 
                         continue;
 
-                    case "logger":
-                        if (value != null)
-                        {
-                            loggers.Add(value);
-                        }
-                        continue;
-
                     case "subdir":
                         if (!string.IsNullOrEmpty(value))
                         {
@@ -586,6 +661,39 @@ namespace Pchp.CodeAnalysis.CommandLine
 
                         embeddedFiles.AddRange(ParseSeparatedFileArgument(value, baseDirectory, diagnostics));
                         continue;
+
+                    case "autoload":
+                        if (string.IsNullOrWhiteSpace(value))
+                        {
+                            diagnostics.Add(Errors.MessageProvider.Instance.CreateDiagnostic(Errors.ErrorCode.ERR_SwitchNeedsValue, Location.None, name));
+                            break;
+                        }
+
+                        const string classmapprefix = "classmap,";
+                        const string psr4prefix = "psr-4,";
+
+                        if (value.StartsWith(classmapprefix, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // "classmap,<fullfilename>"
+                            autoload_classmapfiles.Add(value.Substring(classmapprefix.Length));
+                            break;
+                        }
+                        else if (value.StartsWith(psr4prefix, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // "psr-4,<prefix>,<path>"
+                            var prefix_dir = value.Substring(psr4prefix.Length);
+                            var comma = prefix_dir.IndexOf(',');
+                            if (comma >= 0)
+                            {
+                                autoload_psr4.Add((prefix_dir.Remove(comma), prefix_dir.Substring(comma + 1)));
+                            }
+
+                            break;
+                        }
+
+                        // not handled
+                        diagnostics.Add(Errors.MessageProvider.Instance.CreateDiagnostic(Errors.ErrorCode.ERR_BadCompilationOptionValue, Location.None, name, value));
+                        break;
 
                     default:
                         break;
@@ -616,11 +724,26 @@ namespace Pchp.CodeAnalysis.CommandLine
                 }
             }
 
-            // Observers
-            var observers = loggers.Select(name => CreateObserver(name, moduleName)).WhereNotNull();
+            // sanitize autoload paths, prefix them with subdir
+            for (int i = 0; i < autoload_psr4.Count; i++)
+            {
+                var value = autoload_psr4[i];
+                var path = subDirectory == null
+                    ? value.path
+                    : PathUtilities.CombinePathsUnchecked(subDirectory, value.path);
+
+                autoload_psr4[i] = (value.prefix, PhpFileUtilities.NormalizeSlashes(path));
+            }
+
+            autoload_classmapfiles = new HashSet<string>(
+                autoload_classmapfiles.Select(path => PhpFileUtilities.NormalizeSlashes(subDirectory == null ? path : PathUtilities.CombinePathsUnchecked(subDirectory, path))),
+                autoload_classmapfiles.Comparer);
+
+            // event source // TODO: change to EventSource
+            var evetsources = new[] { CreateObserver("Peachpie.Compiler.Diagnostics.Observer,Peachpie.Compiler.Diagnostics", moduleName) }.WhereNotNull();
 
 #if TRACE
-            observers = observers.Concat(new Utilities.CompilationTrackerExtension.TraceObserver());
+            evetsources = evetsources.Concat(new CompilationTrackerExtension.TraceObserver());
 #endif
 
             // Dev11 searches for the key file in the current directory and assembly output directory.
@@ -658,8 +781,7 @@ namespace Pchp.CodeAnalysis.CommandLine
                 kind: SourceCodeKind.Regular,
                 languageVersion: languageVersion,
                 shortOpenTags: shortOpenTags,
-                features: ImmutableDictionary<string, string>.Empty, // features: parsedFeatures
-                defines: defines.ToImmutableDictionary()
+                features: ImmutableDictionary<string, string>.Empty // features: parsedFeatures
             );
 
             var scriptParseOptions = parseOptions.WithKind(SourceCodeKind.Script);
@@ -680,10 +802,11 @@ namespace Pchp.CodeAnalysis.CommandLine
                 versionString: versionString,
                 phpdocTypes: phpdocTypes,
                 parseOptions: parseOptions,
+                defines: defines.ToImmutableDictionary(),
                 diagnostics: diagnostics.AsImmutable(),
                 specificDiagnosticOptions: diagnosticOptions,
                 //usings: usings,
-                optimizationLevel: optimize ? OptimizationLevel.Release : OptimizationLevel.Debug,
+                optimizationLevel: optimization,
                 checkOverflow: false, // checkOverflow,
                                       //deterministic: deterministic,
                 concurrentBuild: concurrentBuild,
@@ -698,7 +821,9 @@ namespace Pchp.CodeAnalysis.CommandLine
                 publicSign: publicSign
             )
             {
-                Observers = observers.AsImmutableOrEmpty(),
+                EventSources = evetsources.AsImmutableOrEmpty(),
+                Autoload_PSR4 = autoload_psr4,
+                Autoload_ClassMapFiles = autoload_classmapfiles,
             };
 
             if (debugPlus)
@@ -713,13 +838,13 @@ namespace Pchp.CodeAnalysis.CommandLine
                 pdbFilePath: null, // to be determined later
                 pdbChecksumAlgorithm: System.Security.Cryptography.HashAlgorithmName.SHA1,
                 outputNameOverride: null, // to be determined later
-                //baseAddress: baseAddress,
-                //highEntropyVirtualAddressSpace: highEntropyVA,
-                //fileAlignment: fileAlignment,
-                //subsystemVersion: subsystemVersion,
+                                          //baseAddress: baseAddress,
+                                          //highEntropyVirtualAddressSpace: highEntropyVA,
+                                          //fileAlignment: fileAlignment,
+                                          //subsystemVersion: subsystemVersion,
                 runtimeMetadataVersion: runtimeMetadataVersion
             );
-            
+
             return new PhpCommandLineArguments()
             {
                 // TODO: parsed arguments
@@ -739,7 +864,7 @@ namespace Pchp.CodeAnalysis.CommandLine
                 //ErrorLogPath = errorLogPath,
                 //AppConfigPath = appConfigPath,
                 SourceFiles = sourceFiles.AsImmutable(),
-                Encoding = Encoding.UTF8,
+                Encoding = codepage, // Encoding.UTF8,
                 ChecksumAlgorithm = SourceHashAlgorithm.Sha1, // checksumAlgorithm,
                 MetadataReferences = metadataReferences.AsImmutable(),
                 AnalyzerReferences = analyzers.AsImmutable(),
@@ -759,7 +884,7 @@ namespace Pchp.CodeAnalysis.CommandLine
                 EmitOptions = emitOptions,
                 //ScriptArguments = scriptArgs.AsImmutableOrEmpty(),
                 //TouchedFilesPath = touchedFilesPath,
-                //PrintFullPaths = printFullPaths,
+                PrintFullPaths = printFullPaths,
                 //ShouldIncludeErrorEndLocation = errorEndLocation,
                 //PreferredUILang = preferredUILang,
                 //SqmSessionGuid = sqmSessionGuid,
@@ -841,11 +966,11 @@ namespace Pchp.CodeAnalysis.CommandLine
                 var eq = pair.IndexOf('=');
                 if (eq < 0)
                 {
-                    defines.Add(pair, string.Empty);
+                    defines[pair] = null;
                 }
                 else
                 {
-                    defines.Add(pair.Remove(eq), pair.Substring(eq + 1));
+                    defines[pair.Remove(eq)] = pair.Substring(eq + 1);
                 }
             }
         }

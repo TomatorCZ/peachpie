@@ -1,4 +1,6 @@
-﻿using Pchp.Core.Reflection;
+﻿#nullable enable
+
+using Pchp.Core.Reflection;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -53,9 +55,26 @@ namespace Pchp.Core
     public class PhpExtensionAttribute : Attribute
     {
         /// <summary>
-        /// Extensions name.
+        /// Extensions name list.
+        /// Cannot be <c>null</c>.
         /// </summary>
-        public string[] Extensions { get; private set; }
+        public string[] Extensions
+            => _extensions is string name ? new[] { name }
+            : _extensions is string[] names ? names
+            : Array.Empty<string>();
+
+        /// <summary>
+        /// Gets the first specified extension name or <c>null</c>.
+        /// </summary>
+        public string? FirstExtensionOrDefault
+            => _extensions is string name ? name
+            : _extensions is string[] names && names.Length != 0 ? names[0]
+            : null;
+
+        /// <summary>
+        /// <see cref="string"/>, <see cref="string"/>[] or <c>null</c>.
+        /// </summary>
+        readonly object _extensions;
 
         /// <summary>
         /// Optional.
@@ -65,11 +84,21 @@ namespace Pchp.Core
         /// The object is used to handle one-time initialization and context life-cycle.
         /// Implement initialization and subscription logic in .ctor.
         /// </remarks>
-        public Type Registrator { get; set; }
+        public Type? Registrator { get; set; }
+
+        public PhpExtensionAttribute()
+        {
+            _extensions = Array.Empty<string>();
+        }
+
+        public PhpExtensionAttribute(string extension)
+        {
+            _extensions = extension;
+        }
 
         public PhpExtensionAttribute(params string[] extensions)
         {
-            this.Extensions = extensions;
+            _extensions = extensions;
         }
 
         public override string ToString()
@@ -107,7 +136,7 @@ namespace Pchp.Core
     /// <summary>
     /// Marks public declarations that won't be visible in the PHP context.
     /// </summary>
-    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Enum | AttributeTargets.Method | AttributeTargets.Field)]
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Enum | AttributeTargets.Method | AttributeTargets.Field | AttributeTargets.Property)]
     public sealed class PhpHiddenAttribute : Attribute
     {
     }
@@ -136,7 +165,7 @@ namespace Pchp.Core
         /// <summary>
         /// Optional. Explicitly set type name.
         /// </summary>
-        public string ExplicitTypeName { get; }
+        public string? ExplicitTypeName { get; }
 
         /// <summary>
         /// Indicates how to treat the type name.
@@ -146,7 +175,18 @@ namespace Pchp.Core
         /// <summary>
         /// Optional. Relative path to the file where the type is defined.
         /// </summary>
-        public string FileName { get; }
+        public string? FileName { get; }
+
+        /// <summary>
+        /// - 0: type is not selected to be autoloaded.<br/>
+        /// - 1: type is marked to be autoloaded.<br/>
+        /// - 2: type is marked to be autoloaded and it is the only unconditional declaration in its source file.<br/>
+        /// </summary>
+        public byte AutoloadFlag { get; }
+
+        public const byte AutoloadAllow = 1;
+
+        public const byte AutoloadAllowNoSideEffect = 2;
 
         /// <summary>
         /// Value stating that the type name is inherited from the CLR name excluding its namespace part, see <see cref="PhpTypeName.NameOnly"/>.
@@ -157,7 +197,7 @@ namespace Pchp.Core
         /// <summary>
         /// Value indicating how to treat the type name in PHP.
         /// </summary>
-        public enum PhpTypeName
+        public enum PhpTypeName : byte
         {
             /// <summary>
             /// Full type name including its namespace name is used.
@@ -184,16 +224,27 @@ namespace Pchp.Core
             TypeNameAs = typeNameAs;
         }
 
+        public PhpTypeAttribute(string phpTypeName, string fileName)
+            : this(phpTypeName, fileName, default)
+        {
+        }
+
         /// <summary>
         /// Annotates the PHP type.
         /// </summary>
         /// <param name="phpTypeName">The type name that will be used in PHP context instead of CLR type name.</param>
         /// <param name="fileName">Optional relative path to the file where the type is defined.</param>
-        public PhpTypeAttribute(string phpTypeName, string fileName = null)
+        /// <param name="autoload">Optional. Specifies if the type can be autoloaded:<br/>
+        /// - 0: type is not selected to be autloaded.<br/>
+        /// - 1: type is marked to be autoloaded.<br/>
+        /// - 2: type is marked to be autoloaded and it is the only unconditional declaration in its source file.<br/>
+        /// </param>
+        public PhpTypeAttribute(string phpTypeName, string fileName, byte autoload)
         {
             ExplicitTypeName = phpTypeName ?? throw new ArgumentNullException();
             FileName = fileName;
             TypeNameAs = PhpTypeName.CustomName;
+            AutoloadFlag = autoload;
         }
     }
 
@@ -219,30 +270,74 @@ namespace Pchp.Core
     }
 
     /// <summary>
-    /// Denotates a function parameter that will be loaded with current class.
-    /// The parameter must be of type <see cref="RuntimeTypeHandle"/>, <see cref="PhpTypeInfo"/> or <see cref="string"/>.
+    /// Denotates a function parameter that will import a special runtime value.
     /// </summary>
     /// <remarks>
-    /// The parameter is used to access callers class context.
-    /// The parameter must be before regular parameters.</remarks>
+    /// This attribute instructs the caller to pass a special value to the parameter.
+    /// It is used byt library functions to get additional runtime information.
+    /// </remarks>
     [AttributeUsage(AttributeTargets.Parameter)]
-    public sealed class ImportCallerClassAttribute : Attribute
+    public sealed class ImportValueAttribute : Attribute
     {
+        /// <summary>
+        /// Value to be imported.
+        /// </summary>
+        public enum ValueSpec
+        {
+            /// <summary>
+            /// Not used.
+            /// </summary>
+            Error = 0,
 
+            /// <summary>
+            /// Current class context.
+            /// The parameter must be of type <see cref="RuntimeTypeHandle"/>, <see cref="PhpTypeInfo"/> or <see cref="string"/>.
+            /// </summary>
+            CallerClass,
+
+            /// <summary>
+            /// Current late static bound class (<c>static</c>).
+            /// The parameter must be of type <see cref="PhpTypeInfo"/>.
+            /// </summary>
+            CallerStaticClass,
+
+            /// <summary>
+            /// Calue of <c>$this</c> variable or <c>null</c> if variable is not defined.
+            /// The parameter must be of type <see cref="object"/>.
+            /// </summary>
+            This,
+
+            /// <summary>
+            /// Provides a reference to the array of local PHP variables.
+            /// The parameter must be of type <see cref="PhpArray"/>.
+            /// </summary>
+            Locals,
+
+            /// <summary>
+            /// Provides callers parameters.
+            /// The parameter must be of type array of <see cref="PhpValue"/>.
+            /// </summary>
+            CallerArgs,
+
+            /// <summary>
+            /// Provides reference to the current script container.
+            /// The parameter must be of type <see cref="RuntimeTypeHandle"/>.
+            /// </summary>
+            CallerScript,
+        }
+
+        public ValueSpec Value { get; }
+
+        public ImportValueAttribute(ValueSpec value)
+        {
+            this.Value = value;
+        }
     }
 
     /// <summary>
-    /// Denotates a function parameter that will be loaded with current late static bound class.
-    /// The parameter must be of type <see cref="PhpTypeInfo"/>.
+    /// Dummy value, used for special generated .ctor symbols so they have a different signature than the regular .ctor.
     /// </summary>
-    /// <remarks>
-    /// The parameter is used to access calers' late static class (<c>static</c>).
-    /// The parameter must be before regular parameters.</remarks>
-    [AttributeUsage(AttributeTargets.Parameter)]
-    public sealed class ImportCallerStaticClassAttribute : Attribute
-    {
-
-    }
+    public struct DummyFieldsOnlyCtor { }
 
     /// <summary>
 	/// Marks return values of methods implementing PHP functions which returns <B>false</B> on error
@@ -294,23 +389,20 @@ namespace Pchp.Core
     public sealed class DefaultValueAttribute : Attribute
     {
         /// <summary>
-        /// Denotates the type of the value.
+        /// The type containing the backing field.
+        /// <c>Null</c> indicates the containing type.
         /// </summary>
-        public enum DefaultValueType
+        public Type? ExplicitType { get; set; }
+
+        /// <summary>
+        /// Name of the backing field.
+        /// </summary>
+        public string FieldName { get; private set; }
+
+        public DefaultValueAttribute(string fieldName)
         {
-            None = 0,
-            PhpArray = 1,
+            FieldName = fieldName;
         }
-
-        /// <summary>
-        /// The type of the default value.
-        /// </summary>
-        public DefaultValueType Type { get; set; }
-
-        /// <summary>
-        /// Optional serialized data using PHP serialization.
-        /// </summary>
-        public byte[] SerializedValue { get; set; }
     }
 
     /// <summary>
@@ -380,7 +472,7 @@ namespace Pchp.Core
         /// <summary>
         /// The Script type from the dependent assembly.
         /// </summary>
-        public Type ScriptType { get; private set; }
+        public Type ScriptType { get; }
 
         public PhpPackageReferenceAttribute(Type scriptType)
         {

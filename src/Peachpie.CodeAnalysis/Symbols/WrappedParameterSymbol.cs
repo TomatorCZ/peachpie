@@ -1,5 +1,6 @@
 ﻿using Microsoft.CodeAnalysis;
 using Pchp.CodeAnalysis.Semantics;
+using Peachpie.CodeAnalysis.Symbols;
 using Roslyn.Utilities;
 using System;
 using System.Collections.Generic;
@@ -55,6 +56,8 @@ namespace Pchp.CodeAnalysis.Symbols
         #region Forwarded
 
         public override BoundExpression Initializer => underlyingParameter.Initializer;
+
+        public override FieldSymbol DefaultValueField => underlyingParameter.DefaultValueField;
 
         internal override TypeSymbol Type => underlyingParameter.Type;
 
@@ -129,6 +132,12 @@ namespace Pchp.CodeAnalysis.Symbols
         {
             get { return underlyingParameter.CustomModifiers; }
         }
+
+        internal override ImportValueAttributeData ImportValueAttributeData => underlyingParameter.ImportValueAttributeData;
+
+        public override bool HasNotNull => underlyingParameter.HasNotNull;
+
+        public override bool IsPhpRw => underlyingParameter.IsPhpRw;
 
         //internal override MarshalPseudoCustomAttributeData MarshallingInformation
         //{

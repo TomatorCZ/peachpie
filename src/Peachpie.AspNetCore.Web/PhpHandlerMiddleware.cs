@@ -1,10 +1,12 @@
 ﻿using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyModel;
 using Pchp.Core;
 using Pchp.Core.Utilities;
 
@@ -54,16 +56,32 @@ namespace Peachpie.AspNetCore.Web
         {
             if (options.ScriptAssembliesName != null)
             {
-                foreach (var assname in options.ScriptAssembliesName.Select(str => new System.Reflection.AssemblyName(str)))
+                foreach (var assname in options.ScriptAssembliesName)
                 {
-                    var ass = System.Reflection.Assembly.Load(assname);
-                    if (ass != null)
+                    Context.AddScriptReference(Assembly.Load(new AssemblyName(assname)));
+                }
+            }
+            else
+            {
+                var PeachpieRuntime = typeof(Context).Assembly.GetName().Name; // "Peachpie.Runtime"
+
+                // reads dependencies from DependencyContext
+                foreach (var lib in DependencyContext.Default.RuntimeLibraries)
+                {
+                    if (lib.Type != "package" && lib.Type != "project")
                     {
-                        Context.AddScriptReference(ass);
+                        continue;
                     }
-                    else
+
+                    // process assembly if it has a dependency to runtime
+                    var dependencies = lib.Dependencies;
+                    for (int i = 0; i < dependencies.Count; i++)
                     {
-                        LogEventSource.Log.ErrorLog($"Assembly '{assname}' couldn't be loaded.");
+                        if (dependencies[i].Name == PeachpieRuntime)
+                        {
+                            Context.AddScriptReference(Assembly.Load(new AssemblyName(lib.Name)));
+                            break;
+                        }
                     }
                 }
             }
@@ -76,7 +94,7 @@ namespace Peachpie.AspNetCore.Web
         {
             return string.IsNullOrEmpty(path)
                 ? string.Empty
-                : CurrentPlatform.NormalizeSlashes(path).TrimEndSeparator();
+                : CurrentPlatform.NormalizeSlashes(path.TrimEndSeparator());
         }
 
         /// <summary>
@@ -92,17 +110,18 @@ namespace Peachpie.AspNetCore.Web
             var script = RequestContextCore.ResolveScript(context.Request);
             if (script.IsValid)
             {
-                return Task.Run(() =>
+                using (var phpctx = new RequestContextCore(context, _rootPath, _options.StringEncoding))
                 {
-                    using (var phpctx = new RequestContextCore(context, _rootPath, _options.StringEncoding))
-                    {
-                        OnContextCreated(phpctx);
-                        phpctx.ProcessScript(script);
-                    }
-                });
-            }
+                    OnContextCreated(phpctx);
+                    phpctx.ProcessScript(script);
+                }
 
-            return _next(context);
+                return Task.CompletedTask;
+            }
+            else
+            {
+                return _next(context);
+            }
         }
     }
 }

@@ -14,19 +14,16 @@ using Pchp.CodeAnalysis.Symbols;
 using Devsense.PHP.Syntax.Ast;
 using Peachpie.CodeAnalysis.Utilities;
 using Pchp.CodeAnalysis.Semantics.TypeRef;
-using System.Text.RegularExpressions;
 using Devsense.PHP.Syntax;
 
 namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
 {
     internal partial class DiagnosticWalker<T> : GraphExplorer<T>
     {
-        private static readonly Regex PrintfSpecsRegex = new Regex(@"%(?:(\d)+\$)?[+-]?(?:[ 0]|'.{1})?-?\d*(?:\.\d+)?[bcdeEufFgGosxX]");
-
         private readonly DiagnosticBag _diagnostics;
         private SourceRoutineSymbol _routine;
 
-        private bool _callsParentCtor;
+        private bool CallsParentCtor { get; set; }
 
         PhpCompilation DeclaringCompilation => _routine.DeclaringCompilation;
 
@@ -90,11 +87,16 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
             //
             routine.GetDiagnostics(diagnostics);
 
+            var visitor = new DiagnosticWalker<VoidStruct>(diagnostics, routine);
+
             //
             if (routine.ControlFlowGraph != null)   // non-abstract method
             {
-                new DiagnosticWalker<VoidStruct>(diagnostics, routine).VisitCFG(routine.ControlFlowGraph);
+                visitor.VisitCFG(routine.ControlFlowGraph);
             }
+
+            //
+            visitor.CheckParams();
         }
 
         private DiagnosticWalker(DiagnosticBag diagnostics, SourceRoutineSymbol routine)
@@ -109,10 +111,9 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
 
             base.VisitCFGInternal(x);
 
-            CheckParams();
-
-            if (!_callsParentCtor && _routine.Name == Devsense.PHP.Syntax.Name.SpecialMethodNames.Construct.Value
-                && _routine.ContainingType.BaseType?.ResolvePhpCtor() != null)
+            if (CallsParentCtor == false &&
+                new Name(_routine.Name).IsConstructName &&
+                HasBaseConstruct(_routine.ContainingType))
             {
                 // Missing calling parent::__construct
                 _diagnostics.Add(_routine, _routine.SyntaxSignature.Span.ToTextSpan(), ErrorCode.WRN_ParentCtorNotCalled, _routine.ContainingType.Name);
@@ -123,6 +124,34 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
 
             // report unreachable blocks
             CheckUnreachableCode(x);
+        }
+
+        /// <summary>
+        /// Checks the base class has implementation of `__construct` which should be called.
+        /// </summary>
+        /// <param name="type">Self.</param>
+        /// <returns>Whether the base of <paramref name="type"/> has `__construct` method implementation.</returns>
+        static bool HasBaseConstruct(NamedTypeSymbol type)
+        {
+            var btype = type?.BaseType;
+            if (btype != null && btype.SpecialType != SpecialType.System_Object && btype.IsClassType() && !btype.IsAbstract)
+            {
+                var bconstruct = btype.ResolvePhpCtor();    // TODO: recursive: true // needs inf recursion prevention
+                if (bconstruct != null && !bconstruct.IsAbstract)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Determines if both identifiers differ only in casing.
+        /// </summary>
+        static bool IsLetterCasingMismatch(string str1, string str2)
+        {
+            return str1 != str2 && string.Equals(str1, str2, StringComparison.InvariantCultureIgnoreCase);
         }
 
         private void CheckParams()
@@ -154,6 +183,74 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
                     //}
                 }
             }
+
+            // check source parameters
+            var srcparams = _routine.SourceParameters;
+            foreach (var p in srcparams)
+            {
+                if (!CheckParameterDefaultValue(p))
+                {
+                    var expectedtype = (p.Syntax.TypeHint is NullableTypeRef nullable ? nullable.TargetType : p.Syntax.TypeHint).ToString(); // do not show "?" in nullable types
+                    var valuetype = TypeCtx.ToString(p.Initializer.TypeRefMask);
+
+                    _diagnostics.Add(_routine, p.Syntax.InitValue, ErrorCode.ERR_DefaultParameterValueTypeMismatch, p.Name, expectedtype, valuetype);
+                }
+            }
+        }
+
+        bool CheckParameterDefaultValue(SourceParameterSymbol p)
+        {
+            var thint = p.Syntax.TypeHint;
+            if (thint != null)
+            {
+                // check type hint and default value
+                var defaultvalue = p.Initializer;
+                if (defaultvalue != null && !defaultvalue.TypeRefMask.IsAnyType && !defaultvalue.TypeRefMask.IsDefault)
+                {
+                    var valuetype = defaultvalue.TypeRefMask;
+
+                    if (TypeCtx.IsNull(valuetype))
+                    {
+                        // allow NULL anytime
+                        return true;
+                    }
+
+                    if (thint is NullableTypeRef nullable)
+                    {
+                        // unwrap nullable type hint
+                        thint = nullable.TargetType;
+                    }
+
+                    if (thint is PrimitiveTypeRef primitive)
+                    {
+                        switch (primitive.PrimitiveTypeName)
+                        {
+                            case PrimitiveTypeRef.PrimitiveType.@bool:
+                                return TypeCtx.IsBoolean(valuetype);
+
+                            case PrimitiveTypeRef.PrimitiveType.array:
+                                return TypeCtx.IsArray(valuetype);
+
+                            case PrimitiveTypeRef.PrimitiveType.@string:
+                                return TypeCtx.IsAString(valuetype);
+
+                            case PrimitiveTypeRef.PrimitiveType.@object:
+                                return false;
+
+                            case PrimitiveTypeRef.PrimitiveType.@float:
+                            case PrimitiveTypeRef.PrimitiveType.@int:
+                                return TypeCtx.IsNumber(valuetype);
+                        }
+                    }
+                    else if (thint is ClassTypeRef classtref)
+                    {
+                        return false; // cannot have default value other than NULL
+                    }
+                }
+            }
+
+            // ok
+            return true;
         }
 
         void CheckLabels(ImmutableArray<ControlFlowGraph.LabelBlockState> labels)
@@ -256,12 +353,12 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
 
                 if (ct.Type.Kind != SymbolKind.ErrorType)
                 {
-                    string symbolName = ct.Type.Name;
+                    var symbolName = ct.Type.Name;
 
-                    if (refName != symbolName && refName.Equals(symbolName, StringComparison.InvariantCultureIgnoreCase))
+                    if (IsLetterCasingMismatch(refName, symbolName))
                     {
                         // Wrong class name case
-                        _diagnostics.Add(_routine, typeRef.PhpSyntax, ErrorCode.INF_ClassNameWrongCase, refName, symbolName);
+                        _diagnostics.Add(_routine, typeRef.PhpSyntax, ErrorCode.INF_TypeNameCaseMismatch, refName, symbolName);
                     }
                 }
             }
@@ -423,8 +520,7 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
                     }
                     else
                     {
-                        bool isoptional = ps[i].IsOptional || (ps[i] is IPhpValue srcp && srcp.Initializer != null);
-                        if (!isoptional && (i < ps.Length - 1 /*check for IsParams only for last parameter*/ || !ps[i].IsParams))
+                        if (!ps[i].IsPhpOptionalParameter() && (i < ps.Length - 1 /*check for IsParams only for last parameter*/ || !ps[i].IsParams))
                         {
                             expectsmin = i - skippedps + 1;
                         }
@@ -455,6 +551,25 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
             return default;
         }
 
+        //public override T VisitArgument(BoundArgument x)
+        //{
+        //    base.VisitArgument(x);
+
+        //    if (!x.Value.TypeRefMask.IsRef && NOT PASSED BY REF) // if value is referenced, we dunno
+        //    {
+        //        // argument should not be 'void' (NULL in PHP)
+        //        if ((x.Type != null && x.Type.SpecialType == SpecialType.System_Void) ||
+        //            x.Value.TypeRefMask.IsVoid(TypeCtx))
+        //        {
+        //            // WRN: Argument has no value, parameter will be always NULL
+        //            _diagnostics.Add(_routine, x.Value.PhpSyntax, ErrorCode.WRN_ArgumentVoid);
+        //        }
+        //    }
+
+        //    //
+        //    return default;
+        //}
+
         public override T VisitGlobalFunctionCall(BoundGlobalFunctionCall x)
         {
             CheckUndefinedFunctionCall(x);
@@ -463,7 +578,7 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
             if (x.Name.IsDirect)
             {
                 CheckObsoleteSymbol(x.PhpSyntax, x.TargetMethod, isMemberCall: false);
-                CheckGlobalFunctionUsage(x);
+                CheckGlobalFunctionCall(x);
             }
             else
             {
@@ -504,6 +619,16 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
                 CheckMissusedPrimitiveType(x.ContainingType);
             }
 
+            if (x.Access.IsWrite && ((Microsoft.CodeAnalysis.Operations.IMemberReferenceOperation)x).Member is PropertySymbol prop && prop.SetMethod == null)
+            {
+                // read-only property written
+                _diagnostics.Add(_routine, GetMemberNameSpanForDiagnostic(x.PhpSyntax),
+                    ErrorCode.ERR_ReadOnlyPropertyWritten,
+                    prop.ContainingType.PhpQualifiedName().ToString(),  // TOOD: _statics
+                    prop.Name);
+            }
+
+            //
             return base.VisitFieldRef(x);
         }
 
@@ -523,16 +648,25 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
             // check deprecated
             CheckObsoleteSymbol(call.PhpSyntax, call.TargetMethod, isMemberCall: true);
 
-            // Mark that parent::__construct was called (to be checked later)
-            if (call.Name.IsDirect && call.Name.NameValue.Name.IsConstructName
-                && call.TypeRef is BoundReservedTypeRef rt && rt.ReservedType == ReservedTypeRef.ReservedType.parent)
+            // remember there is call to `parent::__construct`
+            if (call.TypeRef is BoundReservedTypeRef rt && rt.ReservedType == ReservedTypeRef.ReservedType.parent &&
+                call.Name.IsDirect &&
+                call.Name.NameValue.Name.IsConstructName)
             {
-                _callsParentCtor = true;
+                CallsParentCtor = true;
+            }
+
+            // check the called method is not abstract
+            if (call.TargetMethod.IsValidMethod() && call.TargetMethod.IsAbstract)
+            {
+                // ERR
+                Add(call.PhpSyntax.Span, Devsense.PHP.Errors.Errors.AbstractMethodCalled, call.TargetMethod.ContainingType.PhpName(), call.Name.NameValue.Name.Value);
             }
 
             //
             return base.VisitStaticFunctionCall(call);
         }
+
         public override T VisitInstanceOf(BoundInstanceOfEx x)
         {
             CheckMissusedPrimitiveType(x.AsType);
@@ -543,15 +677,6 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
         public override T VisitVariableRef(BoundVariableRef x)
         {
             CheckUninitializedVariableUse(x);
-
-            if (x.Access.IsWrite || x.Access.IsUnset)
-            {
-                // assignment to $this is not allowed:
-                if (x.Variable is ThisVariableReference)
-                {
-                    _diagnostics.Add(_routine, x.PhpSyntax, ErrorCode.ERR_CannotAssignToThis);
-                }
-            }
 
             return base.VisitVariableRef(x);
         }
@@ -617,18 +742,14 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
             switch (x.Operation)
             {
                 case Operations.Clone:
+                    // check we only pass object instances to the "clone" operation
+                    // anything else causes a runtime warning!
                     var operandTypeMask = x.Operand.TypeRefMask;
-                    if (!operandTypeMask.IsAnyType && !operandTypeMask.IsRef)
+                    if (!operandTypeMask.IsAnyType &&
+                        !operandTypeMask.IsRef &&
+                        !TypeCtx.IsObjectOnly(operandTypeMask))
                     {
-                        var types = TypeCtx.GetTypes(operandTypeMask);
-                        foreach (var t in types)
-                        {
-                            if (!t.IsObject)    // clone called on non-object
-                            {
-                                _diagnostics.Add(_routine, x.PhpSyntax, ErrorCode.WRN_CloneNonObject, TypeCtx.ToString(operandTypeMask));
-                                break;
-                            }
-                        }
+                        _diagnostics.Add(_routine, x.PhpSyntax, ErrorCode.WRN_CloneNonObject, TypeCtx.ToString(operandTypeMask));
                     }
                     break;
             }
@@ -724,36 +845,48 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
 
         static string GetMemberNameForDiagnostic(Symbol target, bool isMemberName)
         {
-            string name = target.Name;
+            string name = target.PhpName();
 
             if (isMemberName)
             {
-                var qname = target.ContainingType.PhpQualifiedName();
+                var qname = target.ContainingType.PhpQualifiedName();   // TOOD: _statics
                 name = qname.ToString(new Name(name), false);
             }
 
             return name;
         }
 
-        void CheckObsoleteSymbol(LangElement node, Symbol target, bool isMemberCall)
+        static TextSpan GetMemberNameSpanForDiagnostic(LangElement node)
+        {
+            if (node is FunctionCall fnc)
+            {
+                return fnc.NameSpan.ToTextSpan();
+            }
+            else
+            {
+                return node.Span.ToTextSpan();
+            }
+        }
+
+        void CheckObsoleteSymbol(LangElement syntax, Symbol target, bool isMemberCall)
         {
             var obsolete = target?.ObsoleteAttributeData;
             if (obsolete != null)
             {
-                _diagnostics.Add(_routine, node, ErrorCode.WRN_SymbolDeprecated, target.Kind.ToString(), GetMemberNameForDiagnostic(target, isMemberCall), obsolete.Message);
+                _diagnostics.Add(_routine, GetMemberNameSpanForDiagnostic(syntax), ErrorCode.WRN_SymbolDeprecated, target.Kind.ToString(), GetMemberNameForDiagnostic(target, isMemberCall), obsolete.Message);
             }
         }
 
         private void CheckUndefinedFunctionCall(BoundGlobalFunctionCall x)
         {
-            if (x.Name.IsDirect && x.TargetMethod.IsErrorMethodOrNull())
+            if (x.Name.IsDirect &&
+                x.TargetMethod is ErrorMethodSymbol errmethod && errmethod.ErrorKind == ErrorMethodKind.Missing)
             {
-                var errmethod = (ErrorMethodSymbol)x.TargetMethod;
-                if (errmethod != null && errmethod.ErrorKind == ErrorMethodKind.Missing)
-                {
-                    var span = x.PhpSyntax is FunctionCall fnc ? fnc.NameSpan : x.PhpSyntax.Span;
-                    _diagnostics.Add(_routine, span.ToTextSpan(), ErrorCode.WRN_UndefinedFunctionCall, x.Name.NameValue.ToString());
-                }
+                var originalName = (x.PhpSyntax is DirectFcnCall fnc)
+                    ? fnc.FullName.OriginalName
+                    : x.Name.NameValue;
+
+                _diagnostics.Add(_routine, GetMemberNameSpanForDiagnostic(x.PhpSyntax), ErrorCode.WRN_UndefinedFunctionCall, originalName.ToString());
             }
         }
 
@@ -812,50 +945,6 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
                     // in a global function or a class without parent -> error
                     Add(typeRef.PhpSyntax.Span, Devsense.PHP.Errors.FatalErrors.ParentAccessedInParentlessClass);
                 }
-            }
-        }
-
-        private void CheckGlobalFunctionUsage(BoundGlobalFunctionCall call)
-        {
-            if (!AnalysisFacts.HasSimpleName(call, out string name))
-            {
-                return;
-            }
-
-            switch (name)
-            {
-                case "printf":
-                case "sprintf":
-                    // Check that the number of arguments matches the format string
-                    if (!call.ArgumentsInSourceOrder.IsEmpty && call.ArgumentsInSourceOrder[0].Value.ConstantValue.TryConvertToString(out string format))
-                    {
-                        int posSpecCount = 0;
-                        int numSpecMax = 0;
-                        foreach (Match match in PrintfSpecsRegex.Matches(format))
-                        {
-                            var numSpecStr = match.Groups[1].Value;
-                            if (numSpecStr == string.Empty)
-                            {
-                                // %d
-                                posSpecCount++;
-                            }
-                            else
-                            {
-                                // %2$d
-                                int numSpec = int.Parse(numSpecStr);
-                                numSpecMax = Math.Max(numSpec, numSpecMax);
-                            }
-                        }
-
-                        int expectedArgCount = 1 + Math.Max(posSpecCount, numSpecMax);
-
-                        if (call.ArgumentsInSourceOrder.Length != expectedArgCount)
-                        {
-                            // Wrong number of arguments with respect to the format string
-                            _diagnostics.Add(_routine, call.PhpSyntax, ErrorCode.WRN_FormatStringWrongArgCount, name);
-                        }
-                    }
-                    break;
             }
         }
 

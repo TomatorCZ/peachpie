@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -120,7 +121,7 @@ namespace Pchp.Core.Reflection
             _frames = InitPhpStackFrames(clrtrace);
         }
 
-        static PhpStackFrame[] InitPhpStackFrames(StackTrace clrtrace)
+        static PhpStackFrame[] InitPhpStackFrames(StackTrace/*!*/clrtrace)
         {
             return clrtrace.GetFrames()
                 .Where(IsPhpStackFrame)
@@ -131,7 +132,7 @@ namespace Pchp.Core.Reflection
         static bool IsPhpStackFrame(StackFrame frame)
         {
             var method = frame.GetMethod();
-            if (method == null)
+            if (method == null || method.DeclaringType == null)
             {
                 return false;
             }
@@ -145,6 +146,12 @@ namespace Pchp.Core.Reflection
             // <Script> type
             var tinfo = method.DeclaringType.GetTypeInfo();
             if (tinfo.Name == "<Script>")
+            {
+                return false;
+            }
+
+            // trait implementation
+            if (ReflectionUtils.IsTraitType(tinfo))
             {
                 return false;
             }
@@ -173,11 +180,16 @@ namespace Pchp.Core.Reflection
                 }
             }
 
-            // [DebuggerNonUserCodeAttribute] or [DebuggerHiddenAttribute] or [PhpHiddenAttribute]
+            // [DebuggerHiddenAttribute]
+            // [PhpHiddenAttribute]
+            // [CompilerGeneratedAttribute]
+            // [DebuggerNonUserCodeAttribute]
             if (method.GetCustomAttribute<DebuggerNonUserCodeAttribute>() != null ||
                 method.GetCustomAttribute<DebuggerHiddenAttribute>() != null ||
                 method.GetCustomAttribute<PhpHiddenAttribute>() != null ||
-                tinfo.GetCustomAttribute<DebuggerNonUserCodeAttribute>() != null)
+                method.GetCustomAttribute<CompilerGeneratedAttribute>() != null ||
+                tinfo.GetCustomAttribute<DebuggerNonUserCodeAttribute>() != null ||
+                tinfo.GetCustomAttribute<CompilerGeneratedAttribute>() != null)
             {
                 return false;
             }
@@ -264,7 +276,7 @@ namespace Pchp.Core.Reflection
 
     internal sealed class PhpStackFrame
     {
-        const string GlobalCodeName = "{main}";
+        public const string GlobalCodeName = "{main}";
         const string UnknownFile = "<unknown>";
 
         readonly StackFrame _clrframe;
@@ -396,7 +408,7 @@ namespace Pchp.Core.Reflection
         }
 
         /// <summary>
-        /// Determines if the stack frame coresponds to the core assembly.
+        /// Determines if the stack frame corresponds to the core assembly.
         /// </summary>
         public bool IsCoreAssembly
         {

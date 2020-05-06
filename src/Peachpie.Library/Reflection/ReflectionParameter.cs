@@ -33,7 +33,7 @@ namespace Pchp.Library.Reflection
 
         /// <summary>Zero-based index of the parameter.</summary>
         internal int _index;
-        internal PhpValue _defaultValue;
+        internal PhpValue? _defaultValue;
 
         #endregion
 
@@ -42,7 +42,7 @@ namespace Pchp.Library.Reflection
         [PhpFieldsOnlyCtor]
         protected ReflectionParameter() { }
 
-        internal ReflectionParameter(ReflectionFunctionAbstract function, int index, Type type, bool allowsNull, bool isVariadic, string name, PhpValue defaultValue = default)
+        internal ReflectionParameter(ReflectionFunctionAbstract function, int index, Type type, bool allowsNull, bool isVariadic, string name, PhpValue? defaultValue = default)
         {
             Debug.Assert(function != null);
             Debug.Assert(index >= 0);
@@ -58,29 +58,43 @@ namespace Pchp.Library.Reflection
         }
 
         /// <summary>Updates the parameter information with an overloaded parameter information.</summary>
-        internal void AddOverload(Type type, bool allowsNull, bool isVariadic, string name, PhpValue defaultValue = default(PhpValue))
+        internal void AddOverload(Type type, bool allowsNull, bool isVariadic, string name, PhpValue? defaultValue = default)
         {
-            if (hasTypeInternal(type) && !hasTypeInternal(_type))
+            if (!hasTypeInternal(_type) && hasTypeInternal(type))
             {
                 _type = type;
             }
 
             _allowsNull |= allowsNull;
-            _isVariadic |= isVariadic;
-
-            if (_defaultValue.IsDefault && !defaultValue.IsDefault)
+            
+            if (!_defaultValue.HasValue && defaultValue.HasValue)
             {
                 _defaultValue = defaultValue;
             }
+
+            if (Core.Reflection.ReflectionUtils.IsAllowedPhpName(_name))
+            {
+                if (Core.Reflection.ReflectionUtils.IsAllowedPhpName(name))
+                {
+                    _isVariadic |= isVariadic;
+                }
+            }
+            else
+            {
+                // previous parameter definition was synthesized,
+                // override the reflection info
+                _name = name;
+                _isVariadic = isVariadic;
+            }
         }
 
-        /// <summary>Marks the parameter as optional is not yet.</summary>
+        /// <summary>Marks the parameter as optional if not yet.</summary>
         internal void SetOptional()
         {
-            if (_defaultValue.IsDefault)
+            if (!_defaultValue.HasValue)
             {
-                _defaultValue = PhpValue.Void; // set something in here so the parameter will be treated as options
-                Debug.Assert(!_defaultValue.IsDefault);
+                // set something in here so the parameter will be treated as optional
+                _defaultValue = PhpValue.Null;
             }
         }
 
@@ -129,7 +143,7 @@ namespace Pchp.Library.Reflection
                     : new ReflectionMethod(declaringclass, routine);
 
                 // resolve parameter:
-                var parameters = ReflectionUtils.ResolveReflectionParameters(func, routine.Methods);
+                var parameters = ReflectionUtils.ResolveReflectionParameters(ctx, func, routine.Methods);
                 var pstr = parameter.AsString();
                 if (pstr != null)
                 {
@@ -168,7 +182,7 @@ namespace Pchp.Library.Reflection
 
         public ReflectionFunctionAbstract getDeclaringFunction() => _function;
 
-        public PhpValue getDefaultValue() => _defaultValue.IsDefault ? throw new ReflectionException() : _defaultValue;
+        public PhpValue getDefaultValue() => _defaultValue.HasValue ? _defaultValue.Value.DeepCopy() : throw new ReflectionException();
 
         public string getDefaultValueConstantName() => null; // we don't know
 
@@ -184,23 +198,23 @@ namespace Pchp.Library.Reflection
 
         public bool isCallable() => _type == typeof(IPhpCallable);
 
-        public bool isDefaultValueAvailable() => _defaultValue.IsSet; // not default && not void
+        public bool isDefaultValueAvailable() => _defaultValue.HasValue; // value is initialized
 
         public bool isDefaultValueConstant() => false; // we don't know
 
-        public bool isOptional() => !_defaultValue.IsDefault;
+        public bool isOptional() => _defaultValue.HasValue;
 
         public bool isPassedByReference() => _type == typeof(PhpAlias);
 
         public bool isVariadic() => _isVariadic;
 
-        public virtual string __toString() => $"Parameter #{_index} [ <{(_defaultValue.IsDefault ? "required" : "optional")}>{_debugTypeName} ${_name}{_debugDefaultValue} ]";
+        public virtual string __toString() => $"Parameter #{_index} [ <{(_defaultValue.HasValue ? "optional" : "required")}>{_debugTypeName} ${_name}{_debugDefaultValue} ]";
 
         public override string ToString() => __toString();
 
-        static bool hasTypeInternal(Type t) => t != null && t != typeof(PhpValue) && t != typeof(PhpAlias) && t != typeof(PhpValue[]) && t != typeof(PhpAlias[]);
+        private protected static bool hasTypeInternal(Type t) => t != null && t != typeof(PhpValue) && t != typeof(PhpAlias) && t != typeof(PhpValue[]) && t != typeof(PhpAlias[]);
 
         private protected string _debugTypeName => string.Empty; // TODO: " {typename}{or NULL}"
-        private protected string _debugDefaultValue => _defaultValue.IsSet ? $" = {_defaultValue.DisplayString}" : string.Empty;
+        private protected string _debugDefaultValue => _defaultValue.HasValue ? $" = {_defaultValue.Value.DisplayString}" : string.Empty;
     }
 }

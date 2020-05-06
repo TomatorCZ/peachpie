@@ -75,6 +75,11 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
         private ulong _mask;
 
         /// <summary>
+        /// Gets the type mask flags part only.
+        /// </summary>
+        public ulong Flags => _mask & FlagsMask;
+
+        /// <summary>
         /// Gets value indicating whether the type represents an any type.
         /// </summary>
         public bool IsAnyType { get { return (_mask & AnyTypeMask) == AnyTypeMask; } }
@@ -100,7 +105,10 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
         /// </summary>
         public bool IsRef
         {
-            get { return (_mask & (ulong)MaskFlags.IsRef) != 0; }
+            get
+            {
+                return (_mask & (ulong)MaskFlags.IsRef) != 0;
+            }
             set
             {
                 if (value) SetIsRef();
@@ -354,7 +362,7 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
             return new TypeRefMask(a.Mask | b);
         }
 
-        public static TypeRefMask Or (TypeRefMask a, TypeRefMask b)
+        public static TypeRefMask Or(TypeRefMask a, TypeRefMask b)
         {
             return a | b;
         }

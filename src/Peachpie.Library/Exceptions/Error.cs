@@ -10,7 +10,7 @@ namespace Pchp.Library.Spl
     /// <summary>
     /// <see cref="Error"/> is the base class for all internal PHP errors.
     /// </summary>
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("Core")]
     public class Error : System.Exception, Throwable
     {
         [PhpHidden]
@@ -77,15 +77,47 @@ namespace Pchp.Library.Spl
 
         public virtual string getTraceAsString() => _stacktrace.GetStackTraceString(); // TODO: _trace
 
-        public virtual string __toString() => _stacktrace.FormatExceptionString(this.GetPhpTypeInfo().Name, getMessage());   // TODO: _trace
+        public void __wakeup() => throw new NotImplementedException();
+
+        public virtual string __toString() => _stacktrace.FormatExceptionString(this.GetPhpTypeInfo().Name, this.Message);   // TODO: _trace
 
         public sealed override string ToString() => __toString();
     }
 
     /// <summary>
+    /// Thrown when an error occurs while performing mathematical operations.
+    /// </summary>
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("Core")]
+    public class ArithmeticError : Error
+    {
+        [PhpFieldsOnlyCtor]
+        protected ArithmeticError() { }
+
+        public ArithmeticError(string message = "", long code = 0, Throwable previous = null)
+            : base(message, code, previous)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Thrown when an attempt is made to divide a number by zero.
+    /// </summary>
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("Core")]
+    public class DivisionByZeroError : ArithmeticError
+    {
+        [PhpFieldsOnlyCtor]
+        protected DivisionByZeroError() { }
+
+        public DivisionByZeroError(string message = "", long code = 0, Throwable previous = null)
+            : base(message, code, previous)
+        {
+        }
+    }
+
+    /// <summary>
     /// Thrown when <c>assert()</c> fails.
     /// </summary>
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("standard")]
     public class AssertionError : Error
     {
         [PhpFieldsOnlyCtor]
@@ -97,13 +129,49 @@ namespace Pchp.Library.Spl
         }
     }
 
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("Core")]
     public class TypeError : Error
     {
         [PhpFieldsOnlyCtor]
         protected TypeError() { }
 
         public TypeError(string message = "", long code = 0, Throwable previous = null)
+            : base(message, code, previous)
+        {
+        }
+    }
+
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("Core")]
+    public class ArgumentCountError : TypeError
+    {
+        [PhpFieldsOnlyCtor]
+        protected ArgumentCountError() { }
+
+        public ArgumentCountError(string message = "", long code = 0, Throwable previous = null)
+            : base(message, code, previous)
+        {
+        }
+    }
+
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("Core")]
+    public class CompileError : Error
+    {
+        [PhpFieldsOnlyCtor]
+        protected CompileError() { }
+
+        public CompileError(string message = "", long code = 0, Throwable previous = null)
+            : base(message, code, previous)
+        {
+        }
+    }
+
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("Core")]
+    public class ParseError : CompileError
+    {
+        [PhpFieldsOnlyCtor]
+        protected ParseError() { }
+
+        public ParseError(string message = "", long code = 0, Throwable previous = null)
             : base(message, code, previous)
         {
         }

@@ -65,14 +65,14 @@ namespace Peachpie.Library.MsSql
         /// <param name="manager">Containing connection manager.</param>
         /// <param name="connectionString">Connection string.</param>
         public PhpSqlDbConnection(SqlConnectionManager manager, string/*!*/ connectionString)
-            : base(manager.Context, connectionString, "mssql connection")
+            : base(connectionString, "mssql connection")
         {
             //if (ctx == null)
             //    throw new ArgumentNullException(nameof(ctx));
 
             //_ctx = ctx;
             _manager = manager;
-            _connection = new SqlConnection();
+            _connection = new SqlConnection(connectionString);
             // TODO: Connection.InfoMessage += new SqlInfoMessageEventHandler(InfoMessage);
         }
 
@@ -86,13 +86,12 @@ namespace Peachpie.Library.MsSql
         /// <summary>
         /// Gets a query result resource.
         /// </summary>
-        /// <param name="connection">Database connection.</param>
         /// <param name="reader">Data reader to be used for result resource population.</param>
         /// <param name="convertTypes">Whether to convert data types to PHP ones.</param>
         /// <returns>Result resource holding all resulting data of the query.</returns>
-        protected override ResultResource/*!*/GetResult(ConnectionResource/*!*/ connection, IDataReader/*!*/ reader, bool convertTypes)
+        protected override ResultResource/*!*/GetResult(IDataReader/*!*/ reader, bool convertTypes)
         {
-            return new PhpSqlDbResult(connection, reader, convertTypes);
+            return new PhpSqlDbResult(this, reader, convertTypes);
         }
 
         /// <summary>

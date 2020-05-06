@@ -1,6 +1,5 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <Import Project="..\..\build\Targets\Settings.props" />
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <AssemblyName>Peachpie.NET.Sdk</AssemblyName>
@@ -11,7 +10,7 @@
     
     <PackageId>Peachpie.NET.Sdk</PackageId>    
     <PackageTags>php;sdk;peachpie;msbuild</PackageTags>
-    <GeneratePackageOnBuild>True</GeneratePackageOnBuild>    
+    <GeneratePackageOnBuild Condition=" $(GeneratePackageOnBuild)=='' ">True</GeneratePackageOnBuild>    
     <Description>The MSBuild SDK containing build targets and runtime.</Description>
   </PropertyGroup>
 
@@ -89,10 +88,7 @@
   </ItemGroup>
 
   <Target Name="PublishAll">
-    <ItemGroup>
-      <_TargetFramework Include="$(TargetFramework)" />
-    </ItemGroup>
-    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Publish" Properties="TargetFramework=%(_TargetFramework.Identity)" />
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Publish" Properties="GeneratePackageOnBuild=false;Version=$(Version)" />
   </Target>
 
   <Target Name="SetPackageDependencies" BeforeTargets="GenerateNuspec" DependsOnTargets="PublishAll">
